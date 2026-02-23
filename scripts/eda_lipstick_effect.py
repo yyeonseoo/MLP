@@ -35,6 +35,10 @@ import pandas as pd
 import seaborn as sns
 from scipy import stats
 
+from src.config.mpl_font import setup_mpl_font
+
+setup_mpl_font()
+
 from src.models.datasets import (
     make_next_quarter_growth_dataset,
     suggest_growth_outlier_bounds,
@@ -106,7 +110,7 @@ def eda_lipstick_vs_shock(macro: pd.DataFrame, lipstick: pd.DataFrame) -> None:
     plt.title("Shock 여부에 따른 립스틱 비중 분포")
     plt.tight_layout()
     out_path = OUTPUTS_DIR / "lipstick_share_by_shock.png"
-    plt.savefig(out_path, dpi=150)
+    plt.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close()
     print(f"boxplot 저장: {out_path}")
 
@@ -125,29 +129,29 @@ def eda_sales_growth_distribution(sales_panel: pd.DataFrame) -> tuple[float, flo
 
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    plt.figure(figsize=(7, 4))
-    sns.histplot(growth.dropna(), bins=100, kde=True)
+    # (A) 1~99% winsorize: 극단치 때문에 x축이 늘어나 한 줄처럼 보이는 것 방지
+    x = growth.dropna().values
+    x_clip = np.clip(x, lower, upper)
+    plt.figure(figsize=(10, 5))
+    plt.hist(x_clip, bins=80, edgecolor="white", alpha=0.8)
     plt.xlabel("sales_growth_qoq")
-    plt.title("분기별 매출 성장률 분포 (원자료)")
+    plt.title("분기별 매출 성장률 분포 (1~99% winsorized)")
     plt.tight_layout()
     out_path = OUTPUTS_DIR / "sales_growth_qoq_hist.png"
-    plt.savefig(out_path, dpi=150)
+    plt.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close()
     print(f"히스토그램 저장: {out_path}")
 
-    # log1p 변환 분포도 참고용
-    valid = growth.dropna()
-    shifted = 1.0 + valid
-    shifted = shifted[shifted > 0]
-    log_growth = np.log(shifted)
-
-    plt.figure(figsize=(7, 4))
-    sns.histplot(log_growth, bins=100, kde=True)
-    plt.xlabel("log(1 + sales_growth_qoq)")
-    plt.title("분기별 매출 성장률 분포 (log1p 변환)")
+    # (B) signed log1p: 음수 성장률도 포함해 분포 확인 (log1p(-1) 불가 방지)
+    x_slog = np.sign(x) * np.log1p(np.abs(x))
+    x_slog = x_slog[np.isfinite(x_slog)]
+    plt.figure(figsize=(10, 5))
+    plt.hist(x_slog, bins=100, edgecolor="white", alpha=0.8)
+    plt.xlabel("sign(x) * log(1 + |x|)")
+    plt.title("분기별 매출 성장률 분포 (signed log1p)")
     plt.tight_layout()
     out_path2 = OUTPUTS_DIR / "sales_growth_qoq_log_hist.png"
-    plt.savefig(out_path2, dpi=150)
+    plt.savefig(out_path2, dpi=200, bbox_inches="tight")
     plt.close()
     print(f"log 분포 히스토그램 저장: {out_path2}")
 
@@ -190,20 +194,61 @@ def build_and_save_datasets(
     sales_panel: pd.DataFrame,
     lower_cut: float,
     upper_cut: float,
+    min_sales_prev: float = 100_000.0,
 ) -> None:
     """
     다음 분기 성장률 예측용 데이터셋 생성 및 train/test 분리.
+
+    - 타깃: log-diff (sales_growth_log) 사용.
+    - sales_prev < min_sales_prev 인 행은 제외하여 분모 왜곡 방지.
+    - 타깃 누수 검사: 현재 분기 성장률과 target_next 상관 출력.
     """
-    print("\n[4] 다음 분기 성장률 예측용 데이터셋 생성")
+    print("\n[4] 다음 분기 성장률 예측용 데이터셋 생성 (target = log-diff)")
 
-    ds = make_next_quarter_growth_dataset(sales_panel)
+    # 전처리 구조 점검: sales_prev 분포 (작은 값 많으면 성장률 왜곡 원인)
+    if "sales_prev" in sales_panel.columns:
+        sp = sales_panel["sales_prev"].dropna()
+        print(f"sales_prev 요약: n={len(sp)}, 0인 행={int((sales_panel['sales_prev'] == 0).sum())}, <1천 행={(sales_panel['sales_prev'].fillna(-1) < 1000).sum()}")
+        if len(sp) > 0:
+            print(sp.describe(percentiles=[0.01, 0.25, 0.5, 0.75, 0.99]).to_string())
 
-    # 이상치 제거 (제안 컷 적용)
+    if "sales_growth_log" not in sales_panel.columns:
+        raise ValueError(
+            "sales_panel에 sales_growth_log 컬럼이 없습니다. "
+            "build_panel_and_regression.py를 먼저 재실행하세요."
+        )
+
+    # 분모가 너무 작은 행 제외 (성장률 구조적 왜곡 방지)
+    panel_ok = sales_panel[
+        sales_panel["sales_prev"].fillna(0) >= min_sales_prev
+    ].copy()
+    print(f"sales_prev >= {min_sales_prev:,.0f} 인 행만 사용: {len(panel_ok)} / {len(sales_panel)}")
+
+    ds = make_next_quarter_growth_dataset(
+        panel_ok,
+        target_col="sales_growth_log",
+    )
+
+    # 타깃 누수 검사: current growth vs next growth 상관 (0.9 이상이면 shift 의심)
+    valid = ds[["sales_growth_log", "target_next"]].dropna()
+    if len(valid) > 10:
+        corr = valid["sales_growth_log"].corr(valid["target_next"])
+        print(f"타깃 누수 검사: corr(sales_growth_log, target_next) = {corr:.4f} (높으면 누수 의심)")
+    else:
+        print("타깃 누수 검사: 샘플 부족으로 생략")
+
+    # log-diff 기준 1~99% 퍼센타일로 이상치 제거
+    growth_combined = pd.concat([ds["sales_growth_log"], ds["target_next"]]).dropna()
+    lower_log, upper_log = suggest_growth_outlier_bounds(
+        growth_combined, lower_q=0.01, upper_q=0.99
+    )
+    print(f"log-diff 이상치 컷 (1%~99%): [{lower_log:.4f}, {upper_log:.4f}]")
+
     ds_filtered = ds[
-        (ds["sales_growth_qoq"] >= lower_cut)
-        & (ds["sales_growth_qoq"] <= upper_cut)
-        & (ds["target_next"] >= lower_cut)
-        & (ds["target_next"] <= upper_cut)
+        (ds["sales_growth_log"] >= lower_log)
+        & (ds["sales_growth_log"] <= upper_log)
+        & (ds["target_next"] >= lower_log)
+        & (ds["target_next"] <= upper_log)
     ].copy()
 
     print(f"전체 샘플 수: {len(ds)}, 이상치 제거 후: {len(ds_filtered)}")

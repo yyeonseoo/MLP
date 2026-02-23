@@ -14,9 +14,9 @@ def make_next_quarter_growth_dataset(
     """
     X_t -> y_{t+1} 구조의 학습용 데이터셋을 만든다.
 
-    - 그룹 단위(기본: 상권 x 업종)로 정렬(year, quarter)
-    - target_col(t+1)을 y로 사용
-    - 마지막 시점(다음 분기 타깃이 없는 행)은 제거
+    - 그룹 단위(기본: 상권 x 업종)로 반드시 (year, quarter) 숫자 기준 정렬.
+      year_quarter 문자열 정렬 시 2020Q10 등 잘못된 순서 가능.
+    - target_col(t+1)을 y로 사용, 마지막 시점 행 제거.
     """
     df = sales_panel.copy()
     sort_keys = list(group_keys) + ["year", "quarter"]

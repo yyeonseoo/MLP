@@ -38,6 +38,7 @@ class FeatureConfig:
         "transactions",
         "transactions_prev",
         "sales_growth_qoq",
+        "sales_growth_log",  # 타깃과 동일 스케일(현재 분기 log-diff) → 제외
     )
 
 

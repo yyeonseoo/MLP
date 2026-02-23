@@ -70,6 +70,11 @@ def add_macro_derivatives(
     config: MacroConfig | None = None,
     shock_ccsi_threshold: float = 100.0,
     shock_cpi_yoy_quantile: float = 0.75,
+    *,
+    use_quantile_shock: bool = True,
+    ccsi_low_quantile: float = 0.25,
+    cpi_yoy_high_quantile: float = 0.75,
+    policy_rate_diff_high_quantile: float = 0.75,
 ) -> pd.DataFrame:
     """
     파생 변수 (YoY, 변화량, 충격 더미) 계산.
@@ -77,7 +82,9 @@ def add_macro_derivatives(
     - cpi_yoy        : 전년 동분기 대비 CPI 변화율
     - ccsi_diff      : 전분기 대비 소비자심리지수 차이
     - policy_rate_diff: 전분기 대비 기준금리 변화
-    - macro_shock    : (ccsi < threshold) 또는 (cpi_yoy 상위 quantile 이상) 이면 1
+    - macro_shock    : use_quantile_shock=True면 복합 충격(quantile 기반)
+                      → CCSI 하위 25% OR CPI YoY 상위 25% OR Δ금리 상위 25%
+                      False면 기존: (ccsi < threshold) OR (cpi_yoy >= quantile)
     """
     if config is None:
         config = MacroConfig()
@@ -89,7 +96,6 @@ def add_macro_derivatives(
     if config.cpi_col in df.columns:
         s = df.sort_values(["year", "quarter"])[config.cpi_col]
         df["cpi_yoy"] = s.pct_change(periods=4).values
-        # 위 연산은 다소 복잡해질 수 있으므로, 간단히 groupby/year shift 방식으로도 가능
 
     # CCSI 변화량
     if config.ccsi_col in df.columns:
@@ -99,26 +105,51 @@ def add_macro_derivatives(
     if config.policy_rate_col in df.columns:
         df["policy_rate_diff"] = df[config.policy_rate_col].diff()
 
-    # 충격 더미
     shock = np.zeros(len(df), dtype=int)
 
-    cond_ccsi = (
-        df[config.ccsi_col] < shock_ccsi_threshold
-        if config.ccsi_col in df.columns
-        else False
-    )
+    if use_quantile_shock:
+        # 복합 충격: quantile 기반 (실제 데이터에 맞춰 “극단 구간”만 shock)
+        cond_ccsi = np.zeros(len(df), dtype=bool)
+        cond_cpi = np.zeros(len(df), dtype=bool)
+        cond_rate = np.zeros(len(df), dtype=bool)
 
-    if "cpi_yoy" in df.columns:
-        valid_cpi = df["cpi_yoy"].dropna()
-        if not valid_cpi.empty:
-            cpi_cut = valid_cpi.quantile(shock_cpi_yoy_quantile)
-            cond_cpi = df["cpi_yoy"] >= cpi_cut
+        if config.ccsi_col in df.columns:
+            v = df[config.ccsi_col].dropna()
+            if len(v) > 0:
+                cut = v.quantile(ccsi_low_quantile)
+                cond_ccsi = (df[config.ccsi_col] <= cut).values
+
+        if "cpi_yoy" in df.columns:
+            v = df["cpi_yoy"].dropna()
+            if len(v) > 0:
+                cut = v.quantile(cpi_yoy_high_quantile)
+                cond_cpi = (df["cpi_yoy"].fillna(-np.inf) >= cut).values
+
+        if "policy_rate_diff" in df.columns:
+            v = df["policy_rate_diff"].dropna()
+            if len(v) > 0:
+                cut = v.quantile(policy_rate_diff_high_quantile)
+                cond_rate = (df["policy_rate_diff"].fillna(-np.inf) >= cut).values
+
+        shock = (cond_ccsi | cond_cpi | cond_rate).astype(int)
+    else:
+        # 기존 방식 (threshold + cpi quantile)
+        cond_ccsi = (
+            df[config.ccsi_col] < shock_ccsi_threshold
+            if config.ccsi_col in df.columns
+            else False
+        )
+        if "cpi_yoy" in df.columns:
+            valid_cpi = df["cpi_yoy"].dropna()
+            if not valid_cpi.empty:
+                cpi_cut = valid_cpi.quantile(shock_cpi_yoy_quantile)
+                cond_cpi = df["cpi_yoy"] >= cpi_cut
+            else:
+                cond_cpi = False
         else:
             cond_cpi = False
-    else:
-        cond_cpi = False
+        shock[np.where(cond_ccsi | cond_cpi)[0]] = 1
 
-    shock[np.where(cond_ccsi | cond_cpi)[0]] = 1
     df["macro_shock"] = shock
 
     return df

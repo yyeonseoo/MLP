@@ -108,26 +108,57 @@ def load_seoul_sales(
 def add_growth_features(
     df: pd.DataFrame,
     group_keys: Iterable[str] = ("region_id", "sector_code"),
+    min_sales_prev: float = 100_000.0,
+    require_contiguous_quarter: bool = True,
 ) -> pd.DataFrame:
     """
     전분기 대비 매출/건수 성장률을 추가한다.
 
-    group_keys 단위(기본: 상권 x 업종)로 정렬(year, quarter) 후 전분기 값을 기준으로 성장률을 계산한다.
+    - 반드시 (year, quarter) 숫자 기준 정렬. year_quarter 문자열 정렬 시 오류 가능.
+    - sales_prev가 0 또는 min_sales_prev 미만이면 성장률 NaN.
+    - require_contiguous_quarter=True: 직전 분기가 실제로 “직전 분기”인 경우만 성장률 유효.
+      (분기 누락 시 shift가 “몇 분기 전”을 가리켜 폭발하는 것 방지)
     """
     sort_keys = list(group_keys) + ["year", "quarter"]
     df_sorted = df.sort_values(sort_keys).copy()
 
     group = df_sorted.groupby(list(group_keys), sort=False)
 
+    # 분기 연속성: t = year*4 + (quarter-1), 직전 행이 t-1이어야 유효
+    df_sorted["_period"] = df_sorted["year"] * 4 + (df_sorted["quarter"] - 1)
+    df_sorted["_period_prev"] = group["_period"].shift(1)
+
     df_sorted["sales_prev"] = group["sales"].shift(1)
     df_sorted["transactions_prev"] = group["transactions"].shift(1)
 
-    # 성장률: (t / t-1 - 1)
+    # 성장률 계산
     df_sorted["sales_growth_qoq"] = df_sorted["sales"] / df_sorted["sales_prev"] - 1.0
     df_sorted["txn_growth_qoq"] = (
         df_sorted["transactions"] / df_sorted["transactions_prev"] - 1.0
     )
+    df_sorted["sales_growth_log"] = (
+        np.log1p(df_sorted["sales"]) - np.log1p(df_sorted["sales_prev"].fillna(0))
+    )
+    df_sorted.loc[df_sorted["sales_prev"].isna(), "sales_growth_log"] = np.nan
 
+    # 누락 구간: 직전 행이 직전 분기가 아니면 성장률 무효화 (분모 왜곡 방지)
+    if require_contiguous_quarter:
+        gap = df_sorted["_period"] - df_sorted["_period_prev"]
+        not_contiguous = gap.isna() | (gap != 1)
+        df_sorted.loc[not_contiguous, "sales_growth_qoq"] = np.nan
+        df_sorted.loc[not_contiguous, "sales_growth_log"] = np.nan
+        df_sorted.loc[not_contiguous, "txn_growth_qoq"] = np.nan
+
+    # 분모가 0이거나 너무 작으면 성장률 무효화
+    bad_prev = (
+        df_sorted["sales_prev"].isna()
+        | (df_sorted["sales_prev"] <= 0)
+        | (df_sorted["sales_prev"] < min_sales_prev)
+    )
+    df_sorted.loc[bad_prev, "sales_growth_qoq"] = np.nan
+    df_sorted.loc[bad_prev, "sales_growth_log"] = np.nan
+
+    df_sorted.drop(columns=["_period", "_period_prev"], inplace=True)
     return df_sorted
 
 

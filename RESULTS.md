@@ -12,6 +12,8 @@
 | 패널 빌드 | `scripts/build_panel_and_regression.py` | ✅ 패널 완료 | 회귀는 대용량으로 인해 별도 실행 권장 |
 | EDA | `scripts/eda_lipstick_effect.py` | ✅ 완료 | 4개 섹션 모두 실행 |
 | 모델 학습 | `scripts/train_growth_models.py` | ✅ 완료 | Linear, RandomForest 실행 (LightGBM 미실행) |
+| 논문용 시각화 | `scripts/plot_paper_visualizations.py` | ✅ 완료 | 5종: 시계열+충격, boxplot, 성장률 비교, FI, 예측vs실제 |
+| 전처리 검증 | `scripts/validate_preprocessing.py` | ✅ 추가 | 연속성·sales_prev·누수·거시조인·립스틱 비중 QA |
 
 ---
 
@@ -127,6 +129,21 @@
 - **제외**: `region_id`, `sector_code`, `year`, `quarter`, `sales`, `transactions`, `sales_growth_qoq`, `sales_prev`, `transactions_prev`
 - **포함**: `txn_growth_qoq`, `macro_shock`, `cpi_yoy`, `ccsi`, `ccsi_diff`, `policy_rate`, `policy_rate_diff`, `is_lipstick`, `oper_months_avg`, `close_months_avg` 등 수치형 컬럼
 
+### 4-3. 논문/발표용 핵심 시각화 (5종)
+
+실행: `PYTHONPATH=. python scripts/plot_paper_visualizations.py`  
+출력 디렉터리: `outputs/paper/`
+
+| # | 파일명 | 내용 |
+|---|--------|------|
+| 1 | `01_lipstick_share_timeseries_shock.png` | 립스틱 비중 시계열 + macro_shock=1 구간 음영 |
+| 2 | `02_lipstick_share_boxplot_shock.png` | 충격기 vs 비충격기 립스틱 비중 박스플롯 (평균/중앙값 표시) |
+| 3 | `03_growth_lipstick_vs_nonlipstick.png` | 립스틱 vs 논립스틱 업종 평균 성장률 2선 비교 |
+| 4 | `04_feature_importance_rf.png` | RandomForest Feature Importance 상위 10개 |
+| 5 | `05_predicted_vs_actual_rf.png` | 예측 vs 실제 산점도 (45도 기준선) |
+
+- **전략**: 논문/발표(립스틱 효과 증명) + 모델 신뢰성(예측·FI) 한 번에 커버. 실제 CPI/CCSI 반영 후 재실행 시 해석력 향상.
+
 ---
 
 ## 5. 패널 회귀 (립스틱 효과 β₃)
@@ -176,3 +193,83 @@ PYTHONPATH=. python scripts/train_growth_models.py
 2. **립스틱 효과 검증**: 패널 회귀 β₃ 추정 및 해석 (데이터·모형 안정화 후)
 3. **모델 튜닝**: LightGBM(libomp 설치), 하이퍼파라미터, feature engineering으로 Top-20 Recall 개선
 4. **서비스화**: FastAPI 서버 + React 대시보드 구현
+
+---
+
+## 9. 적용된 패치 (타깃·충격 정의 개선)
+
+### 패치 1: 타깃을 log-diff 기반으로 변경
+
+- **목적**: 전분기 매출이 작을 때 성장률 폭발 → 그래프/학습 불안정 해소
+- **변경**:
+  - `src/data/seoul_sales.py`: `add_growth_features()`에 `sales_growth_log = log(sales+1) - log(sales_prev+1)` 추가
+  - `scripts/eda_lipstick_effect.py`: `build_and_save_datasets()`에서 `target_col="sales_growth_log"` 사용, log-diff 1~99% 퍼센타일로 이상치 제거
+- **효과**: ③ 립스틱 vs 논립스틱 비교 시 극단치에 덜 휘둘림; 모델 타깃 스케일 안정
+
+### 패치 2: shock을 quantile 기반 복합 충격으로 재정의
+
+- **목적**: placeholder/고정 threshold 대신 “데이터 상 극단 구간”만 충격으로 표시
+- **변경**:
+  - `src/data/macro_quarterly.py`: `add_macro_derivatives(..., use_quantile_shock=True)` (기본)
+    - CCSI 하위 25% → shock
+    - CPI YoY 상위 75% → shock
+    - Δ금리 상위 75% → shock
+    - 위 3개 중 **하나라도 해당**이면 `macro_shock=1`
+  - 기존 방식 쓰려면 `use_quantile_shock=False` 로 호출
+- **효과**: ①·② 시계열/박스플롯에서 충격 구간이 더 설득력 있게 구분됨 (실제 데이터 반영 시)
+
+### 패치 적용 후 실행 순서
+
+패치 반영 후에는 **패널을 먼저 재생성**해야 `sales_growth_log`가 포함됨.
+
+```bash
+PYTHONPATH=. python scripts/build_panel_and_regression.py   # 1) 패널 재생성 (연속 구간만 growth 유효)
+PYTHONPATH=. python scripts/validate_preprocessing.py       # 2) 전처리 QA (연속성·sales_prev·누수·조인)
+PYTHONPATH=. python scripts/eda_lipstick_effect.py          # 3) EDA + train/test (log-diff 타깃)
+PYTHONPATH=. python scripts/plot_paper_visualizations.py    # 4) 논문 시각화 (① 전 서울 합산, ③ 중앙값)
+```
+
+- ③ 성장률 비교: **중앙값(median)** 사용으로 변경해 outlier 튐 완화
+
+---
+
+## 10. 전처리 구조 점검 및 수정 (체크리스트 반영)
+
+**문서화용 문장 (심사/발표 시 필수):**  
+성장률 산출 전, 상권×업종×분기 패널의 **연속성(분기 누락)**을 검증했고, 누락 구간은 성장률 계산에서 **제외**하여 분모 왜곡을 방지했다. (직전 행이 “직전 분기”가 아닌 경우 해당 관측의 성장률을 NaN 처리.)
+
+### 1) 패널 연속성 (분기 누락 → 성장률 폭발 방지)
+
+- **`add_growth_features` (seoul_sales.py)**  
+  - **`require_contiguous_quarter=True`**: 분기 인덱스 `t = year*4 + (quarter-1)` 기준으로, 그룹 내 `t - t_prev == 1`인 경우에만 성장률을 유효하게 둠.  
+  - 직전 행이 “몇 분기 전”인 경우(패널 불연속)에는 `sales_growth_qoq`, `sales_growth_log`, `txn_growth_qoq`를 **NaN**으로 두어 371,900 같은 폭발 방지.
+- **검증**: `scripts/validate_preprocessing.py`에서 **분기 연속 비율** 출력. 권장 ≥90%, 80% 미만이면 성장률 왜곡 의심.
+
+### 2) 성장률 계산 구조
+
+- **`add_growth_features` (seoul_sales.py)**  
+  - `min_sales_prev=100_000`: `sales_prev`가 0이거나 10만 원 미만이면 성장률 NaN.
+  - 정렬은 항상 **(year, quarter)** 숫자 기준.
+- **`build_and_save_datasets` (eda_lipstick_effect.py)**  
+  - **sales_prev 필터**: `sales_prev >= 100_000` 인 행만 데이터셋에 사용.
+  - **타깃 누수 검사**: `corr(sales_growth_log, target_next)` 출력. 0.9 근처면 shift 오류 의심.
+  - **sales_prev 진단**: 0인 행 수, 1천 미만 행 수, `describe()` 출력.
+
+### 3) 정렬
+
+- `make_next_quarter_growth_dataset`, `add_growth_features`에서 정렬 키를 **(year, quarter)** 로 명시. `year_quarter` 문자열 정렬 사용 금지.
+
+### 4) 전처리 검증 스크립트 (QA)
+
+- **`scripts/validate_preprocessing.py`**: 패널 생성 후 실행 권장.  
+  - 2-1 패널 연속성(분기 연속 비율), 2-2 sales_prev 0/작은 값 비중, 2-3 타깃 누수 상관, 2-4 거시 조인 결측·분기별 동일값, 2-5 립스틱 비중 정의 안내.  
+- 실행: `PYTHONPATH=. python scripts/validate_preprocessing.py` (build_panel 후, EDA 전/후 모두 가능).
+
+### 5) 립스틱 비중 시계열 (①)
+
+- **전 서울 합산 기준** 사용: `lipstick_share = sum(sales | is_lipstick) / sum(sales)` 를 분기별로 계산.
+- `plot_lipstick_share_timeseries(macro, lipstick, sales_panel)` 에 `sales_panel` 전달 시 위 합산 비중으로 그림. 미전달 시 상권별 비중의 평균.
+
+### 6) Shock 정의
+
+- §9 패치 2와 동일: quantile 기반 복합 충격 (CCSI 하위 25%, CPI YoY 상위 25%, Δ금리 상위 25% 중 하나라도 해당 시 shock=1).
