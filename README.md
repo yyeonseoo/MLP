@@ -22,3 +22,7 @@ new_ml_project/
 ```bash
 pip install -r requirements.txt
 ```
+
+## 실행 결과
+
+전체 파이프라인 실행 결과는 [RESULTS.md](RESULTS.md)에 정리되어 있습니다.
