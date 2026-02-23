@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+venv/
+.env
+.venv
+
+# Data
+data/raw/*.csv
+data/raw/*.xlsx
+data/processed/*.csv
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Outputs (선택: 저장하려면 제거)
+# outputs/
