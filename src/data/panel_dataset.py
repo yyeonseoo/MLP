@@ -6,6 +6,11 @@ from typing import Sequence
 
 import pandas as pd
 
+# 코로나 거시 충격 구간 (기간 지정 시 사용). 2020Q1 ~ 2022Q1
+COVID_SHOCK_QUARTERS: list[str] = (
+    [f"{y}Q{q}" for y in (2020, 2021) for q in (1, 2, 3, 4)] + ["2022Q1"]
+)
+
 from src.data.macro_quarterly import MacroConfig, add_macro_derivatives, load_macro_quarterly
 from src.data.seoul_sales import (
     SalesConfig,
@@ -14,6 +19,7 @@ from src.data.seoul_sales import (
     compute_lipstick_share_by_region_quarter,
     load_seoul_sales,
 )
+from src.data.shock_index import compute_shock_index_from_sales, merge_shock_index_into_macro
 from src.data.trade_area_change import TradeAreaChangeConfig, load_trade_change_by_area
 
 
@@ -38,6 +44,10 @@ class PanelConfig:
     sales_config: SalesConfig = field(default_factory=SalesConfig)
     macro_config: MacroConfig = field(default_factory=MacroConfig)
     trade_change_config: TradeAreaChangeConfig = field(default_factory=TradeAreaChangeConfig)
+    # 충격기 구간. None이면 quantile 기반, 지정하면 해당 분기만 충격기(1). 예: COVID_SHOCK_QUARTERS
+    shock_periods: list[tuple[int, int]] | list[str] | None = None
+    # True면 매출 기반 충격지수(분기합계→업종별 증감→상대 증감→Z-score)로 shock_score/macro_shock 덮어씀
+    use_sales_shock_index: bool = True
 
 
 def build_panel_dataset(cfg: PanelConfig) -> dict[str, pd.DataFrame]:
@@ -57,7 +67,18 @@ def build_panel_dataset(cfg: PanelConfig) -> dict[str, pd.DataFrame]:
 
     # 2) 거시지표
     macro = load_macro_quarterly(cfg.macro_quarterly_path, config=cfg.macro_config)
-    macro = add_macro_derivatives(macro, config=cfg.macro_config)
+    macro = add_macro_derivatives(
+        macro, config=cfg.macro_config, shock_periods=cfg.shock_periods
+    )
+
+    # 2-1) 매출 기반 거시경제 충격지수 (분기별 매출 합계 → 업종별 증감률 → 전체 대비 상대 증감 → Z-score)
+    if cfg.use_sales_shock_index:
+        try:
+            shock_quarterly = compute_shock_index_from_sales(sales)
+            macro = merge_shock_index_into_macro(macro, shock_quarterly, binary_quantile=0.75)
+        except Exception as e:
+            import warnings
+            warnings.warn(f"매출 기반 충격지수 계산 실패, 거시 변수 기준 유지: {e}")
 
     # 3) 립스틱 지수 (상권 x 분기)
     lipstick_share = compute_lipstick_share_by_region_quarter(sales)

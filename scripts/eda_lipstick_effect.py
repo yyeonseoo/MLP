@@ -267,6 +267,16 @@ def build_and_save_datasets(
     print(f"train 저장: {train_path}")
     print(f"test 저장: {test_path}")
 
+    # 추천용: 다음 분기 로그매출 타깃 데이터셋 (성장률 대신 → 분포 안정, 랭킹 정상화)
+    if "target_log_sales_next" not in panel_ok.columns:
+        print("target_log_sales_next 없음 → log_sales_dataset 스킵")
+    else:
+        ds_log = panel_ok.dropna(subset=["target_log_sales_next"]).copy()
+        train_log, test_log = temporal_train_test_split(ds_log, test_start_year=2023, test_start_quarter=1)
+        train_log.to_csv(DATA_PROCESSED / "log_sales_dataset_train.csv", index=False)
+        test_log.to_csv(DATA_PROCESSED / "log_sales_dataset_test.csv", index=False)
+        print(f"추천용 log_sales_dataset 저장: train {len(train_log)}, test {len(test_log)}")
+
 
 def main() -> None:
     sales_panel, macro, lipstick = load_processed_tables()

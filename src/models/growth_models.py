@@ -113,19 +113,17 @@ def train_baseline_models(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
     feature_cfg: FeatureConfig | None = None,
+    actual_col: str | None = None,
 ) -> Dict[str, Dict[str, float]]:
     """
-    LinearRegression, RandomForest, LightGBM 세 가지 베이스라인 학습 및 평가.
+    LinearRegression, RandomForest, LightGBM 베이스라인 학습 및 평가.
 
-    반환값:
-      {
-        "linear": {"rmse": ..., "mae": ..., "top20_recall": ...},
-        "rf": {...},
-        "lgbm": {...},
-      }
+    actual_col: Recall@k 계산 시 실제 랭킹 기준 컬럼 (기본 = feature_cfg.target_col).
     """
     if feature_cfg is None:
         feature_cfg = FeatureConfig()
+    if actual_col is None:
+        actual_col = feature_cfg.target_col
 
     X_train, y_train, feature_cols = build_feature_matrix(train_df, feature_cfg)
     test_subset = test_df.copy()
@@ -174,7 +172,9 @@ def train_baseline_models(
         eval_df = test_df.copy()
         eval_df = eval_df.loc[X_test.index].copy()
         eval_df["pred"] = y_pred
-        metrics["top20_recall"] = compute_topk_recall(eval_df, k=20)
+        metrics["top20_recall"] = compute_topk_recall(
+            eval_df, k=20, actual_col=actual_col, pred_col="pred"
+        )
 
         results[name] = metrics
 

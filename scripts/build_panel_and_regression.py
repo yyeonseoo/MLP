@@ -73,11 +73,12 @@ def main() -> None:
         if fallback.exists():
             trade_change_area_path = str(fallback)
 
-    # 1) 패널 데이터 생성
+    # 1) 패널 데이터 생성 (충격기 = Z-score 기반 shock_score 상위 25%. 고정 구간 쓰려면 shock_periods=COVID_SHOCK_QUARTERS)
     cfg = PanelConfig(
         sales_paths=[str(p) for p in sales_paths],
         macro_quarterly_path=str(macro_quarterly_path),
         trade_change_area_path=trade_change_area_path,
+        shock_periods=None,
     )
     outputs = build_panel_dataset(cfg)
 
@@ -86,19 +87,19 @@ def main() -> None:
 
     sales_panel: pd.DataFrame = outputs["sales_panel"]
 
-    # 3) 립스틱 효과 패널 회귀
-    reg_cfg = PanelRegressionConfig()
+    # 3) 립스틱 효과 패널 회귀 (3분류: Shock×Lipstick, Shock×Luxury)
+    reg_cfg = PanelRegressionConfig(use_three_way=True)
     result = fit_lipstick_panel_regression(sales_panel, cfg=reg_cfg)
 
     print(result.summary())
     print()
-    print("=== 핵심 계수 (립스틱 효과 상호작용 β₃ 근사) ===")
-    interaction_term = f"{reg_cfg.shock_var}:{reg_cfg.lipstick_var}"
-    if interaction_term in result.params:
-        beta3 = result.params[interaction_term]
-        print(f"{interaction_term} = {beta3:.4f}")
-    else:
-        print(f"상호작용 항 {interaction_term} 를 찾을 수 없습니다. formula 구성을 확인하세요.")
+    print("=== 핵심 계수 (β₄: Shock×Lipstick, β₅: Shock×Luxury) ===")
+    term_sl = f"{reg_cfg.shock_var}:{reg_cfg.lipstick_var}"
+    term_slux = f"{reg_cfg.shock_var}:{reg_cfg.luxury_var}"
+    if term_sl in result.params:
+        print(f"  {term_sl} (β₄, 립스틱 효과 기대 > 0) = {result.params[term_sl]:.4f}")
+    if term_slux in result.params:
+        print(f"  {term_slux} (β₅, 럭셔리 감소 기대 < 0) = {result.params[term_slux]:.4f}")
 
 
 if __name__ == "__main__":

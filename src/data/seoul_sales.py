@@ -7,7 +7,11 @@ from typing import Iterable, List, Sequence
 import numpy as np
 import pandas as pd
 
-from src.config.lipstick_config import add_lipstick_flag_by_name
+from src.config.lipstick_config import (
+    add_lipstick_flag_by_name,
+    add_luxury_flag_by_name,
+    add_sector_group_by_name,
+)
 
 
 @dataclass
@@ -99,8 +103,12 @@ def load_seoul_sales(
         }
     )
 
-    # 립스틱 업종 플래그
-    core["is_lipstick"] = add_lipstick_flag_by_name(core["sector_name"])
+    # 립스틱 업종 플래그 (Core 기준, 실험 1)
+    core["is_lipstick"] = add_lipstick_flag_by_name(core["sector_name"], use_narrow=True)
+    # 럭셔리 업종 플래그 (고가 사치)
+    core["is_luxury"] = add_luxury_flag_by_name(core["sector_name"])
+    # 3단계 분류: lipstick | luxury | necessity
+    core["sector_group"] = add_sector_group_by_name(core["sector_name"])
 
     return core
 
@@ -130,6 +138,9 @@ def add_growth_features(
 
     df_sorted["sales_prev"] = group["sales"].shift(1)
     df_sorted["transactions_prev"] = group["transactions"].shift(1)
+    # 다음 분기 매출 → 추천용 타깃 (분모 문제 없음, 분포 안정)
+    sales_next = group["sales"].shift(-1)
+    df_sorted["target_log_sales_next"] = np.log1p(sales_next)
 
     # 성장률 계산
     df_sorted["sales_growth_qoq"] = df_sorted["sales"] / df_sorted["sales_prev"] - 1.0

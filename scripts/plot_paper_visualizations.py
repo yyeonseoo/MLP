@@ -54,6 +54,50 @@ def load_data():
 
 
 # ---------------------------------------------------------------------------
+# 01b 연속형 충격 점수 시계열 + 상위 25% threshold
+# ---------------------------------------------------------------------------
+def plot_shock_score_timeseries(macro: pd.DataFrame) -> None:
+    """
+    shock_score 시계열 + 75% 분위수 기준선 + macro_shock=1 구간 음영.
+    (Z-score 기반이면 블록이 아닌 구간별 변동으로 나옴)
+    """
+    if "shock_score" not in macro.columns:
+        print("  shock_score 없음 → 01b 스킵 (패널을 Z-score 기준으로 재생성 후 다시 실행)")
+        return
+    by_q = (
+        macro[["year_quarter", "year", "quarter", "shock_score", "macro_shock"]]
+        .sort_values(["year", "quarter"])
+        .reset_index(drop=True)
+    )
+    q75 = by_q["shock_score"].quantile(0.75)
+    x = np.arange(len(by_q))
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(x, by_q["shock_score"], color="C0", linewidth=1.5, label="shock_score")
+    ax.axhline(q75, color="red", linestyle="--", alpha=0.8, label=f"75% 분위 ({q75:.2f})")
+    shock = by_q["macro_shock"].values
+    i = 0
+    while i < len(shock):
+        if shock[i] == 1:
+            start = i
+            while i < len(shock) and shock[i] == 1:
+                i += 1
+            ax.axvspan(start - 0.5, i - 0.5, alpha=0.2, color="red")
+        else:
+            i += 1
+    ax.set_xticks(x)
+    ax.set_xticklabels(by_q["year_quarter"], rotation=45, ha="right")
+    ax.set_xlabel("분기")
+    ax.set_ylabel("shock_score (Z-score 복합)")
+    ax.set_title("01b 연속형 충격 점수 시계열 (상위 25% = 충격기 음영)")
+    ax.legend(loc="upper right")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(OUTPUTS_DIR / "01b_shock_score_timeseries.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"저장: {OUTPUTS_DIR / '01b_shock_score_timeseries.png'}")
+
+
+# ---------------------------------------------------------------------------
 # ① 립스틱 비중 시계열 + 충격 구간 표시
 # ---------------------------------------------------------------------------
 def plot_lipstick_share_timeseries(
@@ -194,7 +238,7 @@ def plot_growth_lipstick_vs_non(sales_panel: pd.DataFrame) -> None:
     ax.plot(non["year_quarter"], non["sales_growth_median"], marker="s", label="논립스틱 업종", color="C1")
     ax.set_xlabel("분기")
     ax.set_ylabel("분기 대비 성장률 중앙값 (sales_growth_qoq)")
-    ax.set_title("③ 립스틱 vs 논립스틱 업종 평균 성장률 비교")
+    ax.set_title("③ 립스틱 vs 논립스틱 업종 성장률 비교 (분기별 중앙값)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     plt.xticks(rotation=45, ha="right")
@@ -202,6 +246,50 @@ def plot_growth_lipstick_vs_non(sales_panel: pd.DataFrame) -> None:
     fig.savefig(OUTPUTS_DIR / "03_growth_lipstick_vs_nonlipstick.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"저장: {OUTPUTS_DIR / '03_growth_lipstick_vs_nonlipstick.png'}")
+
+
+# ---------------------------------------------------------------------------
+# ③b 립스틱 vs 럭셔리 vs 필수 3그룹 성장률 시계열
+# ---------------------------------------------------------------------------
+def plot_growth_three_groups(sales_panel: pd.DataFrame) -> None:
+    """
+    3단계 분류: Lipstick(저가 감정 사치) vs Luxury(경기 민감 고가) vs Necessity(필수).
+    분기별 중앙값 성장률 3선 그래프. sector_group 필요 (패널 재생성 후).
+    """
+    if "sector_group" not in sales_panel.columns:
+        print("sector_group 없음 → 03b 스킵 (패널 재생성 후 다시 실행)")
+        return
+
+    growth = sales_panel.replace([np.inf, -np.inf], np.nan).dropna(subset=["sales_growth_qoq"])
+    growth = growth.copy()
+    # sector_group: lipstick | luxury | necessity (3분류)
+    growth["group_3"] = growth["sector_group"].replace(
+        {"lipstick": "Lipstick", "luxury": "Luxury", "necessity": "Necessity"}
+    )
+
+    by_q = growth.groupby(["year_quarter", "group_3"], as_index=False).agg(
+        sales_growth_median=("sales_growth_qoq", "median"),
+    )
+    q_order = growth[["year_quarter", "year", "quarter"]].drop_duplicates().sort_values(["year", "quarter"])
+    by_q = by_q.merge(q_order, on="year_quarter", how="left")
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for i, label in enumerate(["Lipstick", "Luxury", "Necessity"]):
+        sub = by_q.loc[by_q["group_3"] == label].sort_values(["year", "quarter"])
+        if len(sub) == 0:
+            continue
+        ax.plot(sub["year_quarter"], sub["sales_growth_median"], marker="o" if i == 0 else "s" if i == 1 else "^", label=label, color=f"C{i}")
+
+    ax.set_xlabel("분기")
+    ax.set_ylabel("분기 대비 성장률 중앙값")
+    ax.set_title("③b 립스틱 vs 럭셔리 vs 필수 업종 성장률 비교 (3단계 분류)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.xticks(rotation=45, ha="right")
+    fig.tight_layout()
+    fig.savefig(OUTPUTS_DIR / "03b_growth_lipstick_luxury_necessity.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"저장: {OUTPUTS_DIR / '03b_growth_lipstick_luxury_necessity.png'}")
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +357,9 @@ def main() -> None:
 
     macro, lipstick, sales_panel, train_df, test_df = load_data()
 
+    print("01b 연속형 충격 점수 시계열 (shock_score + threshold)")
+    plot_shock_score_timeseries(macro)
+
     print("① 립스틱 비중 시계열 + 충격 구간 (전 서울 합산 기준)")
     plot_lipstick_share_timeseries(macro, lipstick, sales_panel)
 
@@ -277,6 +368,9 @@ def main() -> None:
 
     print("③ 립스틱 vs 논립스틱 성장률 비교")
     plot_growth_lipstick_vs_non(sales_panel)
+
+    print("③b 립스틱 vs 럭셔리 vs 필수 3그룹 성장률")
+    plot_growth_three_groups(sales_panel)
 
     print("④⑤ RF 학습 및 Feature Importance / 예측 vs 실제")
     train_rf_and_plot(train_df, test_df)

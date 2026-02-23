@@ -11,7 +11,10 @@
 | 거시지표 생성 | `scripts/build_macro_quarterly.py` | ✅ 완료 | 2020Q1~2024Q4 placeholder CSV 생성 |
 | 패널 빌드 | `scripts/build_panel_and_regression.py` | ✅ 패널 완료 | 회귀는 대용량으로 인해 별도 실행 권장 |
 | EDA | `scripts/eda_lipstick_effect.py` | ✅ 완료 | 4개 섹션 모두 실행 |
-| 모델 학습 | `scripts/train_growth_models.py` | ✅ 완료 | Linear, RandomForest 실행 (LightGBM 미실행) |
+| 모델 학습 | `scripts/train_growth_models.py` | ✅ 완료 | 성장률(log-diff) 타깃, Linear/RF |
+| **추천용 모델** | `scripts/train_recommendation_models.py` | ✅ 추가 | **타깃: 다음 분기 로그매출**, Recall@20 랭킹 재정의 |
+| **랭킹 데이터셋** | `scripts/build_rank_dataset.py` | ✅ 추가 | 타깃 log(sales_{t+1}+1), group=(상권·분기), lag/encoding |
+| **LightGBM Ranker** | `scripts/train_ranker_lgbm.py` | ✅ 추가 | NDCG@20, Precision@20, HitRate@20 (Mac: brew install libomp) |
 | 논문용 시각화 | `scripts/plot_paper_visualizations.py` | ✅ 완료 | 5종: 시계열+충격, boxplot, 성장률 비교, FI, 예측vs실제 |
 | 전처리 검증 | `scripts/validate_preprocessing.py` | ✅ 추가 | 연속성·sales_prev·누수·거시조인·립스틱 비중 QA |
 
@@ -37,6 +40,14 @@
 - **경로**: `data/processed/lipstick_region_quarter.csv`
 - **단위**: 상권 × 분기
 - **컬럼**: `lipstick_share`, `lipstick_index_rel`, `sales_total`, `sales_lipstick`, `sales_non_lipstick` 등
+
+### 2-3-1. 충격기(macro_shock) 정의
+
+- **기본 사용 (패널 빌드 스크립트)**: **기간 지정** — 2020Q1 ~ 2022Q1을 **코로나 거시 충격기**로 고정.
+  - `PanelConfig(shock_periods=COVID_SHOCK_QUARTERS)` → 해당 9개 분기만 `macro_shock=1`, 나머지 비충격기(0).
+- **대안 (quantile 기반)**: `shock_periods=None`으로 두면 `add_macro_derivatives(..., use_quantile_shock=True)` 적용.
+  - CCSI ≤ 하위 25% OR CPI YoY ≥ 상위 75% OR 기준금리 변화량 ≥ 상위 75% 인 분기를 충격기로 분류.
+  - 상대적 극단만 잡으므로 “역사적 사건”과 구간이 안 맞을 수 있음. 직관적 구간이 필요하면 `shock_periods` 사용 권장.
 
 ### 2-4. 학습용 데이터셋 (growth_dataset_train / test)
 
@@ -127,7 +138,7 @@
 ### 4-2. Feature 구성
 
 - **제외**: `region_id`, `sector_code`, `year`, `quarter`, `sales`, `transactions`, `sales_growth_qoq`, `sales_prev`, `transactions_prev`
-- **포함**: `txn_growth_qoq`, `macro_shock`, `cpi_yoy`, `ccsi`, `ccsi_diff`, `policy_rate`, `policy_rate_diff`, `is_lipstick`, `oper_months_avg`, `close_months_avg` 등 수치형 컬럼
+- **포함**: `txn_growth_qoq`, `macro_shock`, `cpi_yoy`, `ccsi`, `ccsi_diff`, `policy_rate`, `policy_rate_diff`, `is_lipstick`, `is_luxury`, `oper_months_avg`, `close_months_avg` 등 수치형 컬럼
 
 ### 4-3. 논문/발표용 핵심 시각화 (5종)
 
@@ -146,24 +157,54 @@
 
 ---
 
-## 5. 패널 회귀 (립스틱 효과 β₃)
+## 5. 업종 3분류 및 패널 회귀 (β₄·β₅)
+
+### 5-1. 업종 3분류 (이론 정합)
+
+- **Lipstick (Core, 실험 1)**: 네일숍, 미용실, 피부관리실, 화장품, 제과점, 커피-음료  
+  단가 낮음 + 감정 보상 소비 + 고가 사치 대체재.
+- **Lipstick Extended (실험 2)**: Core + 치킨전문점, 패스트푸드점, 분식전문점, 호프-간이주점, 노래방.
+- **Luxury**: 일반의류, 패션잡화, 액세서리, 가방, 시계및귀금속, 신발, 가전제품, 전자상거래업, 자동차미용, 자동차수리, 인테리어, 여관, 골프연습장, 스포츠클럽.
+- **Necessity**: 그 외 (필수·생계·교육·서비스).  
+설정: `src/config/lipstick_config.py` (LIPSTICK_CORE, LIPSTICK_EXTENDED, LUXURY_SECTOR_NAMES).  
+패널: `is_lipstick`(Core 기준), `is_luxury`, `sector_group`(lipstick|luxury|necessity).
+
+### 5-2. 3분류 패널 회귀
 
 - **모형**:  
-  `log_sales ~ macro_shock * is_lipstick + C(region_id) + C(year_quarter)`  
-- **β₃ 해석**: `macro_shock:is_lipstick` 계수 > 0이면 충격기에 립스틱 업종이 상대적으로 강세
-- **실행 비고**: 40만 행 + 상권/시점 고정효과로 인해 실행 시간이 길어 이번 문서 작성 시점에는 미실행. 별도로 아래 명령 실행 권장:
-
-```bash
-PYTHONPATH=. python scripts/build_panel_and_regression.py
-```
+  `log(Sales) = β₀ + β₁·Shock + β₂·Lipstick + β₃·Luxury + β₄·(Shock×Lipstick) + β₅·(Shock×Luxury) + FE + ε`
+- **해석**: β₄ > 0 → 립스틱 효과; β₅ < 0 → 럭셔리 감소. 두 계수가 동시에 나와야 설득력 있음.
+- **실행**: `PanelRegressionConfig(use_three_way=True)` 기본.  
+  `PYTHONPATH=. python scripts/build_panel_and_regression.py`
 
 ---
 
-## 6. 추천 시스템
+## 6. 추천 시스템 (상권 추천 AI)
 
-- **함수**: `src/recommend/recommender.py` — `recommend_top_n_for_region(model, df_current, region_id, top_k=20)`
-- **용도**: 특정 상권에 대해 다음 분기 성장률 예측 상위 20개 업종 추천
-- **실제 서비스**: 학습된 모델 저장/로드 및 FastAPI 연동 필요
+### 6-1. 목표 재정의
+
+- **타깃**: 다음 분기 매출 수준 `log(sales_{t+1}+1)` (성장률 노이즈 회피)
+- **그룹**: (region_id, year_quarter) — 상권·분기별로 업종을 줄 세우는 랭킹 문제
+- **평가**: NDCG@20, Precision@20, HitRate@20 (Top-20 교집합만 보지 않음)
+
+### 6-2. 랭킹 데이터셋
+
+- **생성**: `PYTHONPATH=. python scripts/build_rank_dataset.py`
+- **출력**: `rank_dataset_train.csv`, `rank_dataset_test.csv`
+- **조건**: 현재 분기 매출 ≥ 100만 원, target_log_sales_next 유효
+- **피처**: log_sales, log_sales_prev, rolling_mean/std(4q), txn_growth_qoq, region_id_te, sector_code_te, 거시 보조
+
+### 6-3. LightGBM Ranker
+
+- **학습**: `PYTHONPATH=. python scripts/train_ranker_lgbm.py` (Mac: `brew install libomp` 필요)
+- **출력**: `ranker_lgbm.txt`, `ranker_feature_cols.json`
+- **평가 지표**: NDCG@20, Precision@20, HitRate@20 (`src/models/rank_metrics.py`)
+
+### 6-4. 추천 API
+
+- **랭커 사용**: `load_ranker()` → `recommend_top_n_ranker(ranker, df_region_quarter, feature_cols, top_k=20)`
+- **설명**: `explain_recommendation(ranker, row, feature_cols, top_n=3)` (importance 기반 간이 설명)
+- **Regressor 폴백**: `recommend_top_n_for_region(model, df_current, region_id)` (기존 성장률 예측 기준)
 
 ---
 
@@ -183,6 +224,10 @@ PYTHONPATH=. python scripts/eda_lipstick_effect.py
 
 # 4) 성장률 예측 모델 학습
 PYTHONPATH=. python scripts/train_growth_models.py
+
+# 5) 추천 서비스: 랭킹 데이터셋 → LightGBM Ranker (Mac: brew install libomp)
+PYTHONPATH=. python scripts/build_rank_dataset.py
+PYTHONPATH=. python scripts/train_ranker_lgbm.py
 ```
 
 ---
@@ -206,7 +251,26 @@ PYTHONPATH=. python scripts/train_growth_models.py
   - `scripts/eda_lipstick_effect.py`: `build_and_save_datasets()`에서 `target_col="sales_growth_log"` 사용, log-diff 1~99% 퍼센타일로 이상치 제거
 - **효과**: ③ 립스틱 vs 논립스틱 비교 시 극단치에 덜 휘둘림; 모델 타깃 스케일 안정
 
-### 패치 2: shock을 quantile 기반 복합 충격으로 재정의
+### 패치 2: shock을 Z-score 연속 점수 + 상위 25% 이진화로 재정의
+
+- **목적**: 전 기간 quantile 한 번에 자르면 시계열이 블록으로 갈리는 문제 방지.
+- **변경**:
+  - `add_macro_derivatives(..., use_shock_score=True)` (기본): **shock_score** = -z(CCSI)+z(CPI YoY)+z(Δ금리), **macro_shock** = 상위 25%만 1. `shock_periods=None` 기본.
+  - 진단: `scripts/inspect_macro_shock.py`. 시각화: `01b_shock_score_timeseries.png`.
+
+### 패치 2-1: 매출 기반 거시경제 충격지수 (연속값)
+
+- **목적**: 0/1 이진이 아닌, 매출 데이터 기반의 **연속형 충격지수** 산출.
+- **과정** (`src/data/shock_index.py`):
+  1. **분기별 매출 합계** (전체)
+  2. **코로나 전후** 구간 참고 (baseline 옵션)
+  3. **업종별 분기 매출** → **업종별 QoQ 증감률**
+  4. **전체 대비 상대 증감률** = 업종 증감률 − 전체 증감률
+  5. 분기별로 요약(업종 상대 증감의 부호 반대 평균) 후 **Z-score 표준화** → `shock_index_z`
+  6. `shock_index_z`를 `shock_score`로 사용, 상위 25%를 `macro_shock=1`로 이진화
+- **적용**: `PanelConfig(use_sales_shock_index=True)` (기본). 패널 빌드 시 매출로 충격지수 계산 후 macro에 병합.
+
+### (구) 패치 2: shock quantile 기반 — 현재는 use_shock_score 기본
 
 - **목적**: placeholder/고정 threshold 대신 “데이터 상 극단 구간”만 충격으로 표시
 - **변경**:
@@ -223,13 +287,16 @@ PYTHONPATH=. python scripts/train_growth_models.py
 패치 반영 후에는 **패널을 먼저 재생성**해야 `sales_growth_log`가 포함됨.
 
 ```bash
-PYTHONPATH=. python scripts/build_panel_and_regression.py   # 1) 패널 재생성 (연속 구간만 growth 유효)
-PYTHONPATH=. python scripts/validate_preprocessing.py       # 2) 전처리 QA (연속성·sales_prev·누수·조인)
-PYTHONPATH=. python scripts/eda_lipstick_effect.py          # 3) EDA + train/test (log-diff 타깃)
-PYTHONPATH=. python scripts/plot_paper_visualizations.py    # 4) 논문 시각화 (① 전 서울 합산, ③ 중앙값)
+PYTHONPATH=. python scripts/build_panel_and_regression.py   # 1) 패널 재생성 (연속 구간만 growth 유효 + target_log_sales_next)
+PYTHONPATH=. python scripts/validate_preprocessing.py       # 2) 전처리 QA
+PYTHONPATH=. python scripts/eda_lipstick_effect.py          # 3) EDA + growth_dataset + log_sales_dataset 생성
+PYTHONPATH=. python scripts/train_recommendation_models.py  # 4) 추천용: 로그매출 타깃, Recall@20 (우선)
+PYTHONPATH=. python scripts/train_growth_models.py          # 5) 성장률 타깃 (논문/β₃ 분석용)
+PYTHONPATH=. python scripts/plot_paper_visualizations.py    # 6) 논문 시각화
 ```
 
 - ③ 성장률 비교: **중앙값(median)** 사용으로 변경해 outlier 튐 완화
+- **추천 성능**: 타깃을 다음 분기 **로그매출**로 바꾼 경로(`train_recommendation_models.py`)에서 Recall@20·예측 분포 개선 기대.
 
 ---
 
@@ -273,3 +340,30 @@ PYTHONPATH=. python scripts/plot_paper_visualizations.py    # 4) 논문 시각�
 ### 6) Shock 정의
 
 - §9 패치 2와 동일: quantile 기반 복합 충격 (CCSI 하위 25%, CPI YoY 상위 25%, Δ금리 상위 25% 중 하나라도 해당 시 shock=1).
+
+---
+
+## 11. 추천용 타깃 전환 (다음 분기 로그매출)
+
+- **목적**: 성장률 타깃의 분모·노이즈·비정상 분포 문제 회피 → 추천 랭킹·예측 vs 실제 정상화.
+- **변경**  
+  - **패널**: `add_growth_features()`에서 `target_log_sales_next = log1p(sales_next)` 추가 (다음 분기 매출의 로그).  
+  - **데이터셋**: EDA 시 `log_sales_dataset_train.csv`, `log_sales_dataset_test.csv` 생성 (동일 시점 split, 타깃만 `target_log_sales_next`).  
+  - **학습**: `scripts/train_recommendation_models.py` — `FeatureConfig(target_col="target_log_sales_next")`, Recall@20은 **실제·예측 모두 로그매출 기준** 상위 20 랭킹으로 계산.
+- **랭킹 정의**: 분기별로 예측 로그매출 상위 20개 vs 실제 로그매출 상위 20개 교집합 비율 평균.
+- **실행**: 패널·EDA 후 `PYTHONPATH=. python scripts/train_recommendation_models.py`.
+
+---
+
+## 12. 3단계 업종 분류 (립스틱 vs 럭셔리 vs 필수)
+
+- **이론**: 소득 ↓ → 고가 사치 수요 ↓, 저가 감정 보상 소비(립스틱) ↑. “작지만 사치적인 대체재”만 립스틱.
+- **`src/config/lipstick_config.py`**  
+  - **Lipstick Narrow (1차 실험)**: 화장품, 네일숍, 피부관리실, 미용실, 향수.  
+  - **Lipstick Extended**: Narrow + 제과점, 아이스크림, 베이커리, 커피-음료.  
+  - **Luxury**: 일반의류, 패션잡화, 액세서리, 가방, 시계및귀금속, 신발, 가전제품 등.  
+  - **Necessity**: 그 외.  
+  - `get_sector_group(sector_name)` → `"lipstick_narrow" | "lipstick_extended" | "luxury" | "necessity"`.  
+  - `is_lipstick` 기본값은 **NARROW**만 사용 (좁게 재정의).
+- **패널**: `load_seoul_sales()`에서 `sector_group` 컬럼 추가.
+- **시각화**: `03b_growth_lipstick_luxury_necessity.png` — 립스틱 vs 럭셔리 vs 필수 분기별 중앙값 성장률 3선. (패널 재생성 후 `plot_paper_visualizations.py` 실행 시 생성.)
