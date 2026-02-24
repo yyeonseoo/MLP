@@ -1,0 +1,29 @@
+{
+  "feature_cols": [
+    "txn_growth_qoq",
+    "cpi",
+    "policy_rate",
+    "unemployment",
+    "ccsi",
+    "cpi_yoy",
+    "ccsi_diff",
+    "policy_rate_diff",
+    "unemployment_diff",
+    "shock_score",
+    "macro_shock",
+    "shock_index_raw_x",
+    "shock_index_z_x",
+    "shock_index_01_x",
+    "shock_index_raw_y",
+    "shock_index_z_y",
+    "shock_index_01_y",
+    "log_sales_prev",
+    "rolling_mean_log_sales_4q",
+    "rolling_std_log_sales_4q",
+    "quarter_2",
+    "quarter_3",
+    "quarter_4",
+    "region_id_te",
+    "sector_code_te"
+  ]
+}

@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import {
   LineChart,
   Line,
@@ -10,17 +11,45 @@ import {
   AreaChart,
   Area,
 } from "recharts";
-import { macroQuarterly } from "../data/mock";
 
-// 최근 분기 = 현재 경기 국면
-const latest = macroQuarterly[macroQuarterly.length - 1];
-const latestShockScore = latest?.shock_score ?? 0;
+type MacroRow = {
+  year_quarter: string;
+  year?: number;
+  quarter?: number;
+  cpi?: number;
+  policy_rate?: number;
+  ccsi?: number;
+  cpi_yoy?: number;
+  shock_score?: number | null;
+  macro_shock?: number | null;
+};
 
 export default function MacroDashboard() {
+  const [macroData, setMacroData] = useState<MacroRow[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
+
+  useEffect(() => {
+    setStatus("loading");
+    fetch("/api/dashboard/macro")
+      .then((r) => r.json())
+      .then((arr: MacroRow[]) => {
+        setMacroData(Array.isArray(arr) ? arr : []);
+        setStatus("ok");
+      })
+      .catch(() => setStatus("error"));
+  }, []);
+
+  const latest = macroData.length > 0 ? macroData[macroData.length - 1] : null;
+  const latestShockScore = latest?.shock_score ?? 0;
+
   return (
     <>
       <h1 style={{ marginTop: 0 }}>거시경제 대시보드</h1>
+      {status === "loading" && <p style={{ color: "#a1a1aa" }}>데이터 로딩 중…</p>}
+      {status === "error" && <p style={{ color: "#f87171" }}>거시 데이터를 불러오지 못했습니다.</p>}
 
+      {status === "ok" && (
+        <>
       <div className="card" style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center" }}>
         <h2 style={{ margin: 0, width: "100%" }}>현재 경기 국면</h2>
         <div style={{ padding: "1rem", background: "#27272a", borderRadius: 8, minWidth: 140 }}>
@@ -36,19 +65,19 @@ export default function MacroDashboard() {
         <div style={{ padding: "1rem", background: "#27272a", borderRadius: 8, minWidth: 140 }}>
           <div style={{ fontSize: "0.85rem", color: "#a1a1aa" }}>충격 점수</div>
           <div style={{ fontSize: "1.25rem", fontWeight: 700 }}>
-            {(latestShockScore * 100).toFixed(0)}%
+            {typeof latestShockScore === "number" ? latestShockScore.toFixed(2) : "—"}
           </div>
-          <div style={{ fontSize: "0.75rem", color: "#71717a" }}>현재 분기 (0=약함, 100=강함)</div>
+          <div style={{ fontSize: "0.75rem", color: "#71717a" }}>Z-score 기반 (높을수록 스트레스)</div>
         </div>
       </div>
 
       <div className="card">
         <h2>CPI(소비자물가지수) / 금리 / 소비자심리지수(CCSI) 추이</h2>
         <p style={{ margin: "0 0 0.75rem", fontSize: "0.85rem", color: "#71717a" }}>
-          CPI·CCSI: 왼쪽 축(%) / 기준금리: 오른쪽 축(%p, 독립 스케일)
+          CPI·CCSI: 왼쪽 축 / 기준금리: 오른쪽 축(%)
         </p>
         <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={macroQuarterly} margin={{ top: 8, right: 56, left: 48, bottom: 8 }}>
+          <LineChart data={macroData} margin={{ top: 8, right: 56, left: 48, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="year_quarter" tick={{ fontSize: 11 }} />
             <YAxis yAxisId="left" domain={["auto", "auto"]} tick={{ fontSize: 11 }} label={{ value: "CPI / CCSI", angle: -90, position: "insideLeft", style: { fontSize: 10 } }} />
@@ -56,7 +85,7 @@ export default function MacroDashboard() {
             <Tooltip
               contentStyle={{ background: "#27272a", border: "1px solid #3f3f46" }}
               formatter={(value: number, name: string) => [
-                name === "CCSI" ? value.toFixed(1) : value.toFixed(2),
+                value != null ? (name === "CCSI" ? Number(value).toFixed(1) : Number(value).toFixed(2)) : "—",
                 name,
               ]}
             />
@@ -75,15 +104,15 @@ export default function MacroDashboard() {
         </p>
         <ResponsiveContainer width="100%" height={220}>
           <AreaChart
-            data={[...macroQuarterly].sort((a, b) => b.shock_score - a.shock_score)}
+            data={[...macroData].sort((a, b) => (b.shock_score ?? 0) - (a.shock_score ?? 0))}
             margin={{ top: 8, right: 8, left: 8, bottom: 8 }}
           >
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="year_quarter" tick={{ fontSize: 11 }} />
-            <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} tickFormatter={(v) => v.toFixed(2)} />
+            <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11 }} tickFormatter={(v) => Number(v).toFixed(2)} />
             <Tooltip
               contentStyle={{ background: "#27272a", border: "1px solid #3f3f46" }}
-              formatter={(value: number) => [(value * 100).toFixed(1) + "%", "충격 점수"]}
+              formatter={(value: number) => [value != null ? Number(value).toFixed(3) : "—", "충격 점수"]}
             />
             <Area
               type="monotone"
@@ -99,6 +128,8 @@ export default function MacroDashboard() {
           <strong>근거:</strong> CCSI(소비자심리지수)·CPI 전년비·기준금리 변동을 분기별 Z-score로 표준화한 뒤 합산한 복합 지표. 높을수록 거시 스트레스(충격)가 큰 구간이며, 상위 25% 분기를 충격기(macro_shock=1)로 분류하는 데 사용.
         </p>
       </div>
+        </>
+      )}
     </>
   );
 }
