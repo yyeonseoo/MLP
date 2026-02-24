@@ -25,37 +25,54 @@ export default function LipstickEffect() {
   const [growthStatus, setGrowthStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [sensitivityStatus, setSensitivityStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
 
+  const fetchJson = async (url: string): Promise<unknown> => {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ct = r.headers.get("content-type") ?? "";
+    if (!ct.includes("application/json")) {
+      const t = await r.text();
+      throw new Error(`Non-JSON response: ${ct} / ${t.slice(0, 80)}`);
+    }
+    return r.json();
+  };
+
   useEffect(() => {
     setLipstickStatus("loading");
-    fetch("/api/dashboard/lipstick_series")
-      .then((r) => r.json())
-      .then((arr: LipstickPoint[]) => {
-        setLipstickSeries(Array.isArray(arr) ? arr : []);
+    fetchJson("/api/dashboard/lipstick_series")
+      .then((arr) => {
+        setLipstickSeries(Array.isArray(arr) ? (arr as LipstickPoint[]) : []);
         setLipstickStatus("ok");
       })
-      .catch(() => setLipstickStatus("error"));
+      .catch((e) => {
+        console.error("lipstick_series:", e);
+        setLipstickStatus("error");
+      });
   }, []);
 
   useEffect(() => {
     setGrowthStatus("loading");
-    fetch("/api/dashboard/growth_comparison")
-      .then((r) => r.json())
-      .then((arr: GrowthPoint[]) => {
-        setGrowthComparison(Array.isArray(arr) ? arr : []);
+    fetchJson("/api/dashboard/growth_comparison")
+      .then((arr) => {
+        setGrowthComparison(Array.isArray(arr) ? (arr as GrowthPoint[]) : []);
         setGrowthStatus("ok");
       })
-      .catch(() => setGrowthStatus("error"));
+      .catch((e) => {
+        console.error("growth_comparison:", e);
+        setGrowthStatus("error");
+      });
   }, []);
 
   useEffect(() => {
     setSensitivityStatus("loading");
-    fetch("/api/dashboard/sensitivity_ranking?limit=20")
-      .then((r) => r.json())
-      .then((arr: SensitivityItem[]) => {
-        setSensitivityRanking(Array.isArray(arr) ? arr : []);
+    fetchJson("/api/dashboard/sensitivity_ranking?limit=20")
+      .then((arr) => {
+        setSensitivityRanking(Array.isArray(arr) ? (arr as SensitivityItem[]) : []);
         setSensitivityStatus("ok");
       })
-      .catch(() => setSensitivityStatus("error"));
+      .catch((e) => {
+        console.error("sensitivity_ranking:", e);
+        setSensitivityStatus("error");
+      });
   }, []);
 
   const shockRanges = useMemo(() => {

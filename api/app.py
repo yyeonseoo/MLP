@@ -40,17 +40,26 @@ _sales_panel_df = None
 
 def _load_artifacts():
     global _models, _feature_cols, _latest_df
-    if _models is not None:
+    if _models is not None and _latest_df is not None:
         return
-    import json
-    with open(MODELS_DIR / "forecast_feature_cols.json", encoding="utf-8") as f:
-        _feature_cols = json.load(f)["feature_cols"]
-    _models = {
-        "p10": joblib.load(MODELS_DIR / "forecast_p10.pkl"),
-        "p50": joblib.load(MODELS_DIR / "forecast_p50.pkl"),
-        "p90": joblib.load(MODELS_DIR / "forecast_p90.pkl"),
-    }
-    _latest_df = pd.read_csv(DATA_PROCESSED / "forecast_latest_inputs.csv")
+    if not (MODELS_DIR / "forecast_feature_cols.json").exists():
+        return
+    if not (DATA_PROCESSED / "forecast_latest_inputs.csv").exists():
+        return
+    try:
+        import json
+        with open(MODELS_DIR / "forecast_feature_cols.json", encoding="utf-8") as f:
+            _feature_cols = json.load(f)["feature_cols"]
+        _models = {
+            "p10": joblib.load(MODELS_DIR / "forecast_p10.pkl"),
+            "p50": joblib.load(MODELS_DIR / "forecast_p50.pkl"),
+            "p90": joblib.load(MODELS_DIR / "forecast_p90.pkl"),
+        }
+        _latest_df = pd.read_csv(DATA_PROCESSED / "forecast_latest_inputs.csv")
+    except Exception:
+        _models = None
+        _feature_cols = None
+        _latest_df = None
 
 
 def _log_to_million(log_sales: float) -> float:

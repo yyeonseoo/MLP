@@ -9,12 +9,7 @@ function App() {
   const [apiOk, setApiOk] = useState<boolean | null>(null);
   useEffect(() => {
     fetch("/api/health")
-      .then(async (r) => {
-        if (!r.ok) return false;
-        const d = await r.json();
-        return (d as { status?: string }).status === "ok";
-      })
-      .then(setApiOk)
+      .then((r) => setApiOk(r.ok))
       .catch(() => setApiOk(false));
   }, []);
 
@@ -30,7 +25,7 @@ function App() {
             textAlign: "center",
           }}
         >
-          API 연결 실패. 서버 확인: 터미널에서{" "}
+          API 연결 실패. 브라우저는 <strong>http://localhost:5173</strong>으로 접속했는지 확인하고, 터미널에서{" "}
           <code style={{ background: "#450a0a", padding: "0.2rem 0.4rem", borderRadius: 4 }}>
             PYTHONPATH=. uvicorn api.app:app --host 0.0.0.0 --port 8000
           </code>{" "}

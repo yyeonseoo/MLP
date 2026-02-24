@@ -11,8 +11,7 @@ import {
   Area,
 } from "recharts";
 
-const API_BASE = "";
-
+// 상대경로만 사용 → Vite 프록시(5173 → 8000) 타야 함. 절대 URL 쓰면 프록시 안 탐.
 type RegionOption = { region_id: string; region_name: string };
 type SectorOption = { sector_code: string; sector_name: string };
 type ForecastResult = {
@@ -40,20 +39,24 @@ export default function Forecast() {
   const [macroLoad, setMacroLoad] = useState<"idle" | "loading" | "ok" | "error">("idle");
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/forecast/options`)
-      .then((r) => r.json())
+    fetch("/api/forecast/options")
+      .then((r) => {
+        console.log("OPTIONS status:", r.status);
+        return r.json();
+      })
       .then((data: { regions?: RegionOption[]; sectors?: SectorOption[] }) => {
+        console.log("OPTIONS json:", data);
         setRegions(data.regions ?? []);
         setSectors(data.sectors ?? []);
         if (data.regions?.length && !regionId) setRegionId(data.regions[0].region_id);
         if (data.sectors?.length && !sectorCode) setSectorCode(data.sectors[0].sector_code);
       })
-      .catch(() => {});
+      .catch((e) => console.error("OPTIONS fetch error:", e));
   }, []);
 
   useEffect(() => {
     setGrowthHistLoad("loading");
-    fetch(`${API_BASE}/api/dashboard/sales_growth_hist?bins=50`)
+    fetch("/api/dashboard/sales_growth_hist?bins=50")
       .then((r) => r.json())
       .then((d: { bins: number[]; counts: number[] }) => {
         setGrowthHist(d);
@@ -64,7 +67,7 @@ export default function Forecast() {
 
   useEffect(() => {
     setMacroLoad("loading");
-    fetch(`${API_BASE}/api/dashboard/macro`)
+    fetch("/api/dashboard/macro")
       .then((r) => r.json())
       .then((arr: { year_quarter: string; shock_score: number | null }[]) => {
         setMacroData(Array.isArray(arr) ? arr : []);
@@ -78,12 +81,16 @@ export default function Forecast() {
     setErrorMsg("");
     try {
       const params = new URLSearchParams({ region_id: regionId, sector_code: sectorCode });
-      const res = await fetch(`${API_BASE}/api/forecast?${params}`);
+      const url = `/api/forecast?${params}`;
+      console.log("FORECAST url:", url);
+      const res = await fetch(url);
+      console.log("FORECAST status:", res.status);
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error((d as { detail?: string }).detail ?? `HTTP ${res.status}`);
       }
       const data: ForecastResult = await res.json();
+      console.log("FORECAST json:", data);
       setResult(data);
       setStatus("ok");
     } catch (e) {
