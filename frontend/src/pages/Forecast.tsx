@@ -10,7 +10,9 @@ import {
   AreaChart,
   Area,
 } from "recharts";
-import { API_BASE } from "../apiBase";
+// 예측/옵션은 프록시 사용(5173→8000). API_BASE 직접 호출 시 연결 실패 방지.
+const FORECAST_API = "";
+
 import { getMacroData } from "../apiMacroCache";
 
 // 개발 시 API_BASE로 8000 직접 요청, 프로덕션은 같은 origin
@@ -33,6 +35,7 @@ export default function Forecast() {
   const [combinations, setCombinations] = useState<Combination[]>([]);
   const [regionId, setRegionId] = useState("");
   const [sectorCode, setSectorCode] = useState("");
+  const [optionsLoadStatus, setOptionsLoadStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [status, setStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [result, setResult] = useState<ForecastResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
@@ -43,7 +46,8 @@ export default function Forecast() {
   const [macroLoad, setMacroLoad] = useState<"idle" | "loading" | "ok" | "error">("idle");
 
   useEffect(() => {
-    fetch(API_BASE + "/api/forecast/options")
+    setOptionsLoadStatus("loading");
+    fetch(FORECAST_API + "/api/forecast/options")
       .then((r) => {
         console.log("OPTIONS status:", r.status);
         return r.json();
@@ -54,22 +58,24 @@ export default function Forecast() {
         setSectors(data.sectors ?? []);
         const combos = data.combinations ?? [];
         setCombinations(combos);
+        setOptionsLoadStatus("ok");
         if (combos.length > 0) {
-          setRegionId(combos[0].region_id);
-          setSectorCode(combos[0].sector_code);
+          setRegionId(String(combos[0].region_id));
+          setSectorCode(String(combos[0].sector_code));
         } else if (data.regions?.length && data.sectors?.length) {
-          setRegionId(data.regions[0].region_id);
-          setSectorCode(data.sectors[0].sector_code);
+          setRegionId(String(data.regions[0].region_id));
+          setSectorCode(String(data.sectors[0].sector_code));
         }
       })
       .catch((e) => {
         console.error("[Forecast] forecast/options:", e);
+        setOptionsLoadStatus("error");
       });
   }, []);
 
   useEffect(() => {
     setGrowthHistLoad("loading");
-    fetch(API_BASE + "/api/dashboard/sales_growth_hist?bins=50")
+    fetch(FORECAST_API + "/api/dashboard/sales_growth_hist?bins=50")
       .then((r) => r.json())
       .then((d: { bins: number[]; counts: number[] }) => {
         setGrowthHist(d);
@@ -96,46 +102,57 @@ export default function Forecast() {
 
   const validRegionOptions = useMemo(() => {
     const list = sectorCode
-      ? combinations.filter((c) => c.sector_code === sectorCode)
+      ? combinations.filter((c) => String(c.sector_code) === String(sectorCode))
       : combinations;
     const seen = new Set<string>();
     return list
       .filter((c) => {
-        if (seen.has(c.region_id)) return false;
-        seen.add(c.region_id);
+        const rid = String(c.region_id);
+        if (seen.has(rid)) return false;
+        seen.add(rid);
         return true;
       })
-      .map((c) => ({ region_id: c.region_id, region_name: c.region_name }))
+      .map((c) => ({ region_id: String(c.region_id), region_name: c.region_name }))
       .sort((a, b) => a.region_name.localeCompare(b.region_name));
   }, [combinations, sectorCode]);
 
   const validSectorOptions = useMemo(() => {
     const list = regionId
-      ? combinations.filter((c) => c.region_id === regionId)
+      ? combinations.filter((c) => String(c.region_id) === String(regionId))
       : combinations;
     const seen = new Set<string>();
     return list
       .filter((c) => {
-        if (seen.has(c.sector_code)) return false;
-        seen.add(c.sector_code);
+        const sc = String(c.sector_code);
+        if (seen.has(sc)) return false;
+        seen.add(sc);
         return true;
       })
-      .map((c) => ({ sector_code: c.sector_code, sector_name: c.sector_name }))
+      .map((c) => ({ sector_code: String(c.sector_code), sector_name: c.sector_name }))
       .sort((a, b) => a.sector_name.localeCompare(b.sector_name));
   }, [combinations, regionId]);
 
   const isValidSelection = useMemo(
-    () => combinations.some((c) => c.region_id === regionId && c.sector_code === sectorCode),
+    () =>
+      combinations.some(
+        (c) => String(c.region_id) === String(regionId) && String(c.sector_code) === String(sectorCode)
+      ),
     [combinations, regionId, sectorCode]
   );
 
   useEffect(() => {
-    if (validRegionOptions.length && !validRegionOptions.some((r) => r.region_id === regionId)) {
+    if (
+      validRegionOptions.length &&
+      !validRegionOptions.some((r) => String(r.region_id) === String(regionId))
+    ) {
       setRegionId(validRegionOptions[0].region_id);
     }
   }, [validRegionOptions, regionId]);
   useEffect(() => {
-    if (validSectorOptions.length && !validSectorOptions.some((s) => s.sector_code === sectorCode)) {
+    if (
+      validSectorOptions.length &&
+      !validSectorOptions.some((s) => String(s.sector_code) === String(sectorCode))
+    ) {
       setSectorCode(validSectorOptions[0].sector_code);
     }
   }, [validSectorOptions, sectorCode]);
@@ -145,7 +162,7 @@ export default function Forecast() {
     setErrorMsg("");
     try {
       const params = new URLSearchParams({ region_id: regionId, sector_code: sectorCode });
-      const url = API_BASE + `/api/forecast?${params}`;
+      const url = FORECAST_API + `/api/forecast?${params}`;
       console.log("FORECAST url:", url);
       const res = await fetch(url);
       console.log("FORECAST status:", res.status);
@@ -238,6 +255,14 @@ export default function Forecast() {
         <p style={{ marginBottom: "1rem", fontSize: "0.9rem", color: "#a1a1aa" }}>
           지역(상권)과 업종을 선택한 뒤 예측 보기를 누르면 다음 분기 예상 매출(보수·중앙·낙관)과 전분기 대비 증감률을 볼 수 있습니다.
         </p>
+        {optionsLoadStatus === "loading" && (
+          <p style={{ color: "#a1a1aa", marginBottom: "1rem" }}>옵션 불러오는 중…</p>
+        )}
+        {optionsLoadStatus === "error" && (
+          <p style={{ color: "#f87171", marginBottom: "1rem" }}>
+            지역·업종 목록을 불러오지 못했습니다. 백엔드(8000)가 실행 중인지 확인해 주세요.
+          </p>
+        )}
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "flex-end", marginBottom: "1rem" }}>
           <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: "0.85rem", color: "#a1a1aa" }}>지역(상권)</span>
@@ -254,7 +279,7 @@ export default function Forecast() {
               }}
             >
               {validRegionOptions.map((r) => (
-                <option key={r.region_id} value={r.region_id}>{r.region_name}</option>
+                <option key={r.region_id} value={String(r.region_id)}>{r.region_name}</option>
               ))}
             </select>
           </label>
@@ -273,7 +298,7 @@ export default function Forecast() {
               }}
             >
               {validSectorOptions.map((s) => (
-                <option key={s.sector_code} value={s.sector_code}>{s.sector_name}</option>
+                <option key={s.sector_code} value={String(s.sector_code)}>{s.sector_name}</option>
               ))}
             </select>
           </label>
@@ -294,7 +319,12 @@ export default function Forecast() {
             {status === "loading" ? "예측 중…" : "예측 보기"}
           </button>
         </div>
-        {!isValidSelection && (regionId || sectorCode) && (
+        {combinations.length === 0 && (regions.length > 0 || sectors.length > 0) && (
+          <p style={{ fontSize: "0.85rem", color: "#fbbf24", marginTop: -8, marginBottom: 8 }}>
+            예측 가능한 조합을 불러오지 못했습니다. 터미널에서 프로젝트 루트로 이동한 뒤 <code>PYTHONPATH=. uvicorn api.app:app --host 0.0.0.0 --port 8000</code> 으로 백엔드를 실행해 주세요.
+          </p>
+        )}
+        {!isValidSelection && (regionId || sectorCode) && combinations.length > 0 && (
           <p style={{ fontSize: "0.85rem", color: "#a1a1aa", marginTop: -8, marginBottom: 8 }}>
             선택한 지역·업종 조합으로만 예측할 수 있습니다. 위 목록에서 유효한 조합을 선택해 주세요.
           </p>
