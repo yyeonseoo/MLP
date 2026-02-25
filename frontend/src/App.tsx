@@ -3,6 +3,7 @@ import { Routes, Route, NavLink } from "react-router-dom";
 import { API_BASE } from "./apiBase";
 import LipstickEffect from "./pages/LipstickEffect";
 import Recommendation from "./pages/Recommendation";
+import MacroDashboard from "./pages/MacroDashboard";
 import Forecast from "./pages/Forecast";
 
 function App() {
@@ -52,6 +53,9 @@ function App() {
         <NavLink to="/recommendation" className={({ isActive }) => (isActive ? "active" : "")}>
           추천 시스템
         </NavLink>
+        <NavLink to="/macro" className={({ isActive }) => (isActive ? "active" : "")}>
+          거시경제 대시보드
+        </NavLink>
         <NavLink to="/forecast" className={({ isActive }) => (isActive ? "active" : "")}>
           매출 전망
         </NavLink>
@@ -60,6 +64,7 @@ function App() {
         <Routes>
           <Route path="/" element={<LipstickEffect />} />
           <Route path="/recommendation" element={<Recommendation />} />
+          <Route path="/macro" element={<MacroDashboard />} />
           <Route path="/forecast" element={<Forecast />} />
         </Routes>
       </main>

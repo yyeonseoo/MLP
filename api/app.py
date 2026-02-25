@@ -187,7 +187,7 @@ def get_dashboard_macro():
         _load_macro()
         if _macro_df is None or _macro_df.empty:
             return []
-        cols = ["year_quarter", "year", "quarter", "cpi", "policy_rate", "ccsi", "cpi_yoy", "shock_score", "macro_shock"]
+        cols = ["year_quarter", "year", "quarter", "cpi", "policy_rate", "unemployment", "ccsi", "cpi_yoy", "shock_score", "macro_shock"]
         cols = [c for c in cols if c in _macro_df.columns]
         if not cols:
             return []

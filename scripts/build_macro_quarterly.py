@@ -8,6 +8,7 @@ data/raw/성별_경제활동인구_총괄_20260223183912.xlsx 를 읽어 분기�
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -17,6 +18,7 @@ from src.data.macro_quarterly import add_macro_derivatives
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_RAW = PROJECT_ROOT / "data" / "raw"
 DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
+FRONTEND_PUBLIC = PROJECT_ROOT / "frontend" / "public"
 
 # 엑셀 파일 경로 (data/raw 직접)
 CCSI_PATH = DATA_RAW / "소비자심리지수(CCSI).xlsx"
@@ -278,6 +280,12 @@ def main() -> None:
     df = add_macro_derivatives(df)
     df.to_csv(out_path, index=False)
     print(f"저장: {out_path} (rows={len(df)})")
+
+    # 프론트에서 fetch('/macro_quarterly.csv')로 사용할 수 있도록 public에 복사
+    FRONTEND_PUBLIC.mkdir(parents=True, exist_ok=True)
+    public_csv = FRONTEND_PUBLIC / "macro_quarterly.csv"
+    shutil.copy(out_path, public_csv)
+    print(f"복사: {public_csv}")
 
 
 if __name__ == "__main__":
