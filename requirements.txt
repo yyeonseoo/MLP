@@ -1,6 +1,7 @@
 # Data
 pandas>=2.0.0
 numpy>=1.24.0
+openpyxl
 
 # Machine Learning
 scikit-learn>=1.3.0

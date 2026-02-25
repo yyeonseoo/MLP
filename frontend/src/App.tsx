@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Routes, Route, NavLink } from "react-router-dom";
+import { API_BASE } from "./apiBase";
 import LipstickEffect from "./pages/LipstickEffect";
 import Recommendation from "./pages/Recommendation";
 import MacroDashboard from "./pages/MacroDashboard";
@@ -8,7 +9,7 @@ import Forecast from "./pages/Forecast";
 function App() {
   const [apiOk, setApiOk] = useState<boolean | null>(null);
   useEffect(() => {
-    fetch("/api/health")
+    fetch(API_BASE + "/api/health")
       .then((r) => setApiOk(r.ok))
       .catch(() => setApiOk(false));
   }, []);

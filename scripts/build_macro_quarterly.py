@@ -1,9 +1,9 @@
 """
 거시지표 분기 CSV 생성.
 
-data/raw/소비자심리지수(CCSI).xlsx, data/raw/소비자물가지수_20260223183741.xlsx 를 읽어
-분기별 macro_quarterly.csv 를 생성한다.
-기준금리·실업률은 두 파일에 없으므로 근사 시계열(한국 은행/통계청 추이 반영) 사용.
+data/raw/소비자심리지수(CCSI).xlsx, data/raw/소비자물가지수_20260223183741.xlsx,
+data/raw/성별_경제활동인구_총괄_20260223183912.xlsx 를 읽어 분기별 macro_quarterly.csv 를 생성한다.
+기준금리는 raw에 없으므로 근사 시계열 사용. 실업률은 경제활동인구 엑셀에 있으면 사용, 없으면 근사치.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.data.macro_quarterly import add_macro_derivatives
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_RAW = PROJECT_ROOT / "data" / "raw"
 DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
@@ -19,6 +21,7 @@ DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
 # 엑셀 파일 경로 (data/raw 직접)
 CCSI_PATH = DATA_RAW / "소비자심리지수(CCSI).xlsx"
 CPI_PATH = DATA_RAW / "소비자물가지수_20260223183741.xlsx"
+LABOR_PATH = DATA_RAW / "성별_경제활동인구_총괄_20260223183912.xlsx"
 
 
 def _load_ccsi_monthly(path: Path) -> pd.DataFrame:
@@ -80,6 +83,52 @@ def _cpi_annual_to_quarterly(annual: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _load_labor_monthly(path: Path) -> pd.DataFrame:
+    """성별_경제활동인구 xlsx: 시트 '데이터', row0=기간(YYYY.MM 또는 YYYY), row1=지표명, row2='계' 데이터. 월별 8컬럼 블록, 7번째가 실업률(%)."""
+    df = pd.read_excel(path, sheet_name="데이터", engine="openpyxl", header=None)
+    if df.shape[0] < 3 or df.shape[1] < 9:
+        return pd.DataFrame(columns=["year", "month", "unemployment"])
+    rows = []
+    block_size = 8
+    col = 1
+    while col + block_size <= df.shape[1]:
+        period_val = df.iloc[0, col]
+        try:
+            s = str(period_val).strip()
+            unemp_val = df.iloc[2, col + 6]
+            unemp = pd.to_numeric(unemp_val, errors="coerce")
+            if pd.isna(unemp):
+                col += block_size
+                continue
+            unemp = float(unemp)
+            if "." in s:
+                y, m = s.split(".", 1)
+                year = int(float(y))
+                month = int(float(m))
+                if 2016 <= year <= 2030 and 1 <= month <= 12:
+                    rows.append({"year": year, "month": month, "unemployment": unemp})
+            else:
+                year = int(float(s))
+                if 2016 <= year <= 2030:
+                    for month in range(1, 13):
+                        rows.append({"year": year, "month": month, "unemployment": unemp})
+        except (TypeError, ValueError):
+            pass
+        col += block_size
+    if not rows:
+        return pd.DataFrame(columns=["year", "month", "unemployment"])
+    return pd.DataFrame(rows)
+
+
+def _labor_monthly_to_quarterly(monthly: pd.DataFrame) -> pd.DataFrame:
+    """월별 실업률 -> 분기별 평균."""
+    if monthly.empty:
+        return pd.DataFrame(columns=["year", "quarter", "unemployment"])
+    monthly = monthly.copy()
+    monthly["quarter"] = ((monthly["month"] - 1) // 3) + 1
+    return monthly.groupby(["year", "quarter"], as_index=False)["unemployment"].mean()
+
+
 def _policy_rate_unemployment_quarterly(years: list[int]) -> pd.DataFrame:
     """기준금리·실업률 근사치 (한국 2020~2024 추이). 두 엑셀에 없으므로 고정 시계열."""
     # 기준금리(%): 2020 낮음 -> 2022~2023 인상 -> 2024 소폭 완화
@@ -113,13 +162,15 @@ def _policy_rate_unemployment_quarterly(years: list[int]) -> pd.DataFrame:
 def build_macro_from_excel(
     ccsi_path: Path | None = None,
     cpi_path: Path | None = None,
+    labor_path: Path | None = None,
 ) -> pd.DataFrame:
     """
-    CCSI·CPI 엑셀에서 분기별 거시지표 DataFrame 생성.
-    기준금리·실업률은 근사 시계열로 채움.
+    CCSI·CPI·경제활동인구 엑셀에서 분기별 거시지표 DataFrame 생성.
+    기준금리는 근사 시계열. 실업률은 labor 엑셀에 있으면 사용, 없으면 근사치.
     """
     ccsi_path = ccsi_path or CCSI_PATH
     cpi_path = cpi_path or CPI_PATH
+    labor_path = labor_path or LABOR_PATH
 
     # CCSI: 월별 -> 분기 평균
     if ccsi_path.exists():
@@ -142,6 +193,16 @@ def build_macro_from_excel(
     years = list(range(2020, 2025))
     policy_unemp = _policy_rate_unemployment_quarterly(years)
 
+    # 실업률: 경제활동인구 엑셀에 있으면 분기별 평균 사용, 없으면 근사치 유지
+    if labor_path.exists():
+        try:
+            labor_monthly = _load_labor_monthly(labor_path)
+            labor_q = _labor_monthly_to_quarterly(labor_monthly)
+        except Exception:
+            labor_q = pd.DataFrame(columns=["year", "quarter", "unemployment"])
+    else:
+        labor_q = pd.DataFrame(columns=["year", "quarter", "unemployment"])
+
     # merge: year, quarter 기준
     base = pd.DataFrame([
         {"year": y, "quarter": q}
@@ -149,6 +210,14 @@ def build_macro_from_excel(
         for q in range(1, 5)
     ])
     out = base.merge(policy_unemp, on=["year", "quarter"], how="left")
+    if not labor_q.empty:
+        out = out.merge(
+            labor_q.rename(columns={"unemployment": "unemployment_labor"}),
+            on=["year", "quarter"],
+            how="left",
+        )
+        out["unemployment"] = out["unemployment_labor"].fillna(out["unemployment"])
+        out = out.drop(columns=["unemployment_labor"], errors="ignore")
     if not ccsi_q.empty:
         out = out.merge(ccsi_q, on=["year", "quarter"], how="left")
     else:
@@ -197,11 +266,16 @@ def main() -> None:
             print("엑셀에서 유효한 데이터를 읽지 못함. placeholder 사용.")
             df = _make_placeholder_macro()
         else:
-            print("엑셀 기반 거시지표 생성:", CCSI_PATH.name, CPI_PATH.name)
+            sources = [CCSI_PATH.name, CPI_PATH.name]
+            if LABOR_PATH.exists():
+                sources.append(LABOR_PATH.name)
+            print("엑셀 기반 거시지표 생성:", ", ".join(sources))
     else:
         print("엑셀 파일 없음. placeholder 사용.")
         df = _make_placeholder_macro()
 
+    df["year_quarter"] = df["year"].astype(str) + "Q" + df["quarter"].astype(str)
+    df = add_macro_derivatives(df)
     df.to_csv(out_path, index=False)
     print(f"저장: {out_path} (rows={len(df)})")
 

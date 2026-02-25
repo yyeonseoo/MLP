@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { API_BASE } from "../apiBase";
 
 type TopSectorRow = {
   rank: number;
@@ -18,15 +19,28 @@ export default function Recommendation() {
   const [items, setItems] = useState<TopSectorRow[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
 
+  const fetchJson = async (url: string): Promise<unknown> => {
+    const r = await fetch(API_BASE + url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ct = r.headers.get("content-type") ?? "";
+    if (!ct.includes("application/json")) {
+      const t = await r.text();
+      throw new Error(`Non-JSON response: ${ct} / ${t.slice(0, 80)}`);
+    }
+    return r.json();
+  };
+
   useEffect(() => {
     setStatus("loading");
-    fetch("/api/dashboard/top_sectors?limit=30")
-      .then((r) => r.json())
-      .then((arr: TopSectorRow[]) => {
-        setItems(Array.isArray(arr) ? arr : []);
+    fetchJson("/api/dashboard/top_sectors?limit=30")
+      .then((arr) => {
+        setItems(Array.isArray(arr) ? (arr as TopSectorRow[]) : []);
         setStatus("ok");
       })
-      .catch(() => setStatus("error"));
+      .catch((e) => {
+        console.error("[Recommendation] top_sectors:", e);
+        setStatus("error");
+      });
   }, []);
 
   const barData = items.map((r) => {

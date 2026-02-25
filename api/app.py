@@ -67,14 +67,17 @@ def _log_to_million(log_sales: float) -> float:
 
 
 def _load_macro():
-    """거시 시계열 (macro_quarterly.csv). 파일 없으면 빈 DataFrame."""
+    """거시 시계열 (macro_quarterly.csv). 파일 없거나 오류 시 빈 DataFrame."""
     global _macro_df
     if _macro_df is not None:
         return
     path = DATA_PROCESSED / "macro_quarterly.csv"
-    if path.exists():
-        _macro_df = pd.read_csv(path)
-    else:
+    try:
+        if path.exists():
+            _macro_df = pd.read_csv(path)
+        else:
+            _macro_df = pd.DataFrame()
+    except Exception:
         _macro_df = pd.DataFrame()
 
 
@@ -113,7 +116,7 @@ def startup():
 
 @app.get("/api/forecast/options")
 def get_forecast_options():
-    """드롭다운용 지역·업종 목록."""
+    """드롭다운용 지역·업종 목록 + 유효 (지역×업종) 조합."""
     _load_artifacts()
     if _latest_df is None:
         raise HTTPException(status_code=503, detail="forecast_latest_inputs.csv 또는 모델이 없습니다.")
@@ -129,7 +132,12 @@ def get_forecast_options():
         .sort_values("sector_name")
         .to_dict("records")
     )
-    return {"regions": regions, "sectors": sectors}
+    combinations = (
+        _latest_df[["region_id", "region_name", "sector_code", "sector_name"]]
+        .drop_duplicates()
+        .to_dict("records")
+    )
+    return {"regions": regions, "sectors": sectors, "combinations": combinations}
 
 
 @app.get("/api/forecast")
@@ -175,14 +183,31 @@ def get_forecast(
 @app.get("/api/dashboard/macro")
 def get_dashboard_macro():
     """거시 시계열 (CPI, 금리, CCSI, shock_score). macro_quarterly.csv 기반."""
-    _load_macro()
-    if _macro_df is None or _macro_df.empty:
+    try:
+        _load_macro()
+        if _macro_df is None or _macro_df.empty:
+            return []
+        cols = ["year_quarter", "year", "quarter", "cpi", "policy_rate", "ccsi", "cpi_yoy", "shock_score", "macro_shock"]
+        cols = [c for c in cols if c in _macro_df.columns]
+        if not cols:
+            return []
+        out = _macro_df[cols].copy()
+        sort_by = [c for c in ["year", "quarter"] if c in out.columns]
+        if sort_by:
+            out = out.sort_values(sort_by)
+        elif "year_quarter" in out.columns:
+            out = out.sort_values("year_quarter")
+        out = out.where(pd.notna(out), None)
+        records = out.to_dict("records")
+        # numpy 타입 → Python 기본 타입 (JSON 직렬화 안전)
+        return [
+            {k: (float(v) if isinstance(v, (np.floating, np.integer)) else v) for k, v in row.items()}
+            for row in records
+        ]
+    except Exception:
+        import traceback
+        traceback.print_exc()
         return []
-    cols = ["year_quarter", "year", "quarter", "cpi", "policy_rate", "ccsi", "cpi_yoy", "shock_score", "macro_shock"]
-    cols = [c for c in cols if c in _macro_df.columns]
-    out = _macro_df[cols].copy().sort_values(["year", "quarter"])
-    out = out.where(pd.notna(out), None)
-    return out.to_dict("records")
 
 
 @app.get("/api/dashboard/top_sectors")

@@ -12,6 +12,7 @@ import {
   BarChart,
   Bar,
 } from "recharts";
+import { API_BASE } from "../apiBase";
 
 type LipstickPoint = { year_quarter: string; lipstick_share: number | null; macro_shock?: number | null };
 type GrowthPoint = { year_quarter: string; lipstick_median?: number | null; non_lipstick_median?: number | null };
@@ -26,11 +27,46 @@ export default function LipstickEffect() {
   const [sensitivityStatus, setSensitivityStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
 
   const fetchJson = async (url: string): Promise<unknown> => {
-    const r = await fetch(url);
+    // #region agent log
+    fetch("http://127.0.0.1:7606/ingest/e72ae99e-15e9-4397-a84e-d737af9aa433", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "62212c" },
+      body: JSON.stringify({
+        sessionId: "62212c",
+        location: "LipstickEffect.tsx:fetchJson",
+        message: "fetch start",
+        data: { url, origin: location.origin, href: location.href },
+        timestamp: Date.now(),
+        hypothesisId: "H1",
+      }),
+    }).catch(() => {});
+    // #endregion
+    const r = await fetch(API_BASE + url);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const ct = r.headers.get("content-type") ?? "";
     if (!ct.includes("application/json")) {
       const t = await r.text();
+      // #region agent log
+      fetch("http://127.0.0.1:7606/ingest/e72ae99e-15e9-4397-a84e-d737af9aa433", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "62212c" },
+        body: JSON.stringify({
+          sessionId: "62212c",
+          location: "LipstickEffect.tsx:fetchJson:nonJson",
+          message: "non-JSON response",
+          data: {
+            url,
+            origin: location.origin,
+            responseUrl: r.url,
+            status: r.status,
+            contentType: ct,
+            bodyPreview: t.slice(0, 120),
+          },
+          timestamp: Date.now(),
+          hypothesisId: "H2",
+        }),
+      }).catch(() => {});
+      // #endregion
       throw new Error(`Non-JSON response: ${ct} / ${t.slice(0, 80)}`);
     }
     return r.json();
@@ -44,7 +80,7 @@ export default function LipstickEffect() {
         setLipstickStatus("ok");
       })
       .catch((e) => {
-        console.error("lipstick_series:", e);
+        console.error("[LipstickEffect] lipstick_series:", e);
         setLipstickStatus("error");
       });
   }, []);
@@ -57,7 +93,7 @@ export default function LipstickEffect() {
         setGrowthStatus("ok");
       })
       .catch((e) => {
-        console.error("growth_comparison:", e);
+        console.error("[LipstickEffect] growth_comparison:", e);
         setGrowthStatus("error");
       });
   }, []);
@@ -70,7 +106,7 @@ export default function LipstickEffect() {
         setSensitivityStatus("ok");
       })
       .catch((e) => {
-        console.error("sensitivity_ranking:", e);
+        console.error("[LipstickEffect] sensitivity_ranking:", e);
         setSensitivityStatus("error");
       });
   }, []);

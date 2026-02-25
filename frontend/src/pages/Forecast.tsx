@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -10,10 +10,13 @@ import {
   AreaChart,
   Area,
 } from "recharts";
+import { API_BASE } from "../apiBase";
+import { getMacroData } from "../apiMacroCache";
 
-// 상대경로만 사용 → Vite 프록시(5173 → 8000) 타야 함. 절대 URL 쓰면 프록시 안 탐.
+// 개발 시 API_BASE로 8000 직접 요청, 프로덕션은 같은 origin
 type RegionOption = { region_id: string; region_name: string };
 type SectorOption = { sector_code: string; sector_name: string };
+type Combination = { region_id: string; region_name: string; sector_code: string; sector_name: string };
 type ForecastResult = {
   base_quarter: string;
   region_name: string;
@@ -27,6 +30,7 @@ type ForecastResult = {
 export default function Forecast() {
   const [regions, setRegions] = useState<RegionOption[]>([]);
   const [sectors, setSectors] = useState<SectorOption[]>([]);
+  const [combinations, setCombinations] = useState<Combination[]>([]);
   const [regionId, setRegionId] = useState("");
   const [sectorCode, setSectorCode] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
@@ -39,49 +43,109 @@ export default function Forecast() {
   const [macroLoad, setMacroLoad] = useState<"idle" | "loading" | "ok" | "error">("idle");
 
   useEffect(() => {
-    fetch("/api/forecast/options")
+    fetch(API_BASE + "/api/forecast/options")
       .then((r) => {
         console.log("OPTIONS status:", r.status);
         return r.json();
       })
-      .then((data: { regions?: RegionOption[]; sectors?: SectorOption[] }) => {
+      .then((data: { regions?: RegionOption[]; sectors?: SectorOption[]; combinations?: Combination[] }) => {
         console.log("OPTIONS json:", data);
         setRegions(data.regions ?? []);
         setSectors(data.sectors ?? []);
-        if (data.regions?.length && !regionId) setRegionId(data.regions[0].region_id);
-        if (data.sectors?.length && !sectorCode) setSectorCode(data.sectors[0].sector_code);
+        const combos = data.combinations ?? [];
+        setCombinations(combos);
+        if (combos.length > 0) {
+          setRegionId(combos[0].region_id);
+          setSectorCode(combos[0].sector_code);
+        } else if (data.regions?.length && data.sectors?.length) {
+          setRegionId(data.regions[0].region_id);
+          setSectorCode(data.sectors[0].sector_code);
+        }
       })
-      .catch((e) => console.error("OPTIONS fetch error:", e));
+      .catch((e) => {
+        console.error("[Forecast] forecast/options:", e);
+      });
   }, []);
 
   useEffect(() => {
     setGrowthHistLoad("loading");
-    fetch("/api/dashboard/sales_growth_hist?bins=50")
+    fetch(API_BASE + "/api/dashboard/sales_growth_hist?bins=50")
       .then((r) => r.json())
       .then((d: { bins: number[]; counts: number[] }) => {
         setGrowthHist(d);
         setGrowthHistLoad("ok");
       })
-      .catch(() => setGrowthHistLoad("error"));
+      .catch((e) => {
+        console.error("[Forecast] sales_growth_hist:", e);
+        setGrowthHistLoad("error");
+      });
   }, []);
 
   useEffect(() => {
     setMacroLoad("loading");
-    fetch("/api/dashboard/macro")
-      .then((r) => r.json())
-      .then((arr: { year_quarter: string; shock_score: number | null }[]) => {
-        setMacroData(Array.isArray(arr) ? arr : []);
+    getMacroData()
+      .then((arr) => {
+        setMacroData(arr.map((r) => ({ year_quarter: r.year_quarter, shock_score: r.shock_score ?? null })));
         setMacroLoad("ok");
       })
-      .catch(() => setMacroLoad("error"));
+      .catch((e) => {
+        console.error("[Forecast] macro:", e);
+        setMacroLoad("error");
+      });
   }, []);
+
+  const validRegionOptions = useMemo(() => {
+    const list = sectorCode
+      ? combinations.filter((c) => c.sector_code === sectorCode)
+      : combinations;
+    const seen = new Set<string>();
+    return list
+      .filter((c) => {
+        if (seen.has(c.region_id)) return false;
+        seen.add(c.region_id);
+        return true;
+      })
+      .map((c) => ({ region_id: c.region_id, region_name: c.region_name }))
+      .sort((a, b) => a.region_name.localeCompare(b.region_name));
+  }, [combinations, sectorCode]);
+
+  const validSectorOptions = useMemo(() => {
+    const list = regionId
+      ? combinations.filter((c) => c.region_id === regionId)
+      : combinations;
+    const seen = new Set<string>();
+    return list
+      .filter((c) => {
+        if (seen.has(c.sector_code)) return false;
+        seen.add(c.sector_code);
+        return true;
+      })
+      .map((c) => ({ sector_code: c.sector_code, sector_name: c.sector_name }))
+      .sort((a, b) => a.sector_name.localeCompare(b.sector_name));
+  }, [combinations, regionId]);
+
+  const isValidSelection = useMemo(
+    () => combinations.some((c) => c.region_id === regionId && c.sector_code === sectorCode),
+    [combinations, regionId, sectorCode]
+  );
+
+  useEffect(() => {
+    if (validRegionOptions.length && !validRegionOptions.some((r) => r.region_id === regionId)) {
+      setRegionId(validRegionOptions[0].region_id);
+    }
+  }, [validRegionOptions, regionId]);
+  useEffect(() => {
+    if (validSectorOptions.length && !validSectorOptions.some((s) => s.sector_code === sectorCode)) {
+      setSectorCode(validSectorOptions[0].sector_code);
+    }
+  }, [validSectorOptions, sectorCode]);
 
   const fetchForecast = async () => {
     setStatus("loading");
     setErrorMsg("");
     try {
       const params = new URLSearchParams({ region_id: regionId, sector_code: sectorCode });
-      const url = `/api/forecast?${params}`;
+      const url = API_BASE + `/api/forecast?${params}`;
       console.log("FORECAST url:", url);
       const res = await fetch(url);
       console.log("FORECAST status:", res.status);
@@ -94,6 +158,7 @@ export default function Forecast() {
       setResult(data);
       setStatus("ok");
     } catch (e) {
+      console.error("[Forecast] forecast (region_id/sector_code):", e);
       setResult(null);
       setStatus("error");
       setErrorMsg(e instanceof Error ? e.message : "예측을 불러올 수 없습니다.");
@@ -188,7 +253,7 @@ export default function Forecast() {
                 minWidth: 200,
               }}
             >
-              {regions.map((r) => (
+              {validRegionOptions.map((r) => (
                 <option key={r.region_id} value={r.region_id}>{r.region_name}</option>
               ))}
             </select>
@@ -207,7 +272,7 @@ export default function Forecast() {
                 minWidth: 200,
               }}
             >
-              {sectors.map((s) => (
+              {validSectorOptions.map((s) => (
                 <option key={s.sector_code} value={s.sector_code}>{s.sector_name}</option>
               ))}
             </select>
@@ -215,7 +280,7 @@ export default function Forecast() {
           <button
             type="button"
             onClick={fetchForecast}
-            disabled={status === "loading"}
+            disabled={status === "loading" || !isValidSelection}
             style={{
               padding: "0.5rem 1.25rem",
               borderRadius: 8,
@@ -229,6 +294,11 @@ export default function Forecast() {
             {status === "loading" ? "예측 중…" : "예측 보기"}
           </button>
         </div>
+        {!isValidSelection && (regionId || sectorCode) && (
+          <p style={{ fontSize: "0.85rem", color: "#a1a1aa", marginTop: -8, marginBottom: 8 }}>
+            선택한 지역·업종 조합으로만 예측할 수 있습니다. 위 목록에서 유효한 조합을 선택해 주세요.
+          </p>
+        )}
         {status === "error" && (
           <p style={{ color: "#f87171", fontSize: "0.9rem" }}>
             {errorMsg}

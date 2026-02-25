@@ -11,18 +11,7 @@ import {
   AreaChart,
   Area,
 } from "recharts";
-
-type MacroRow = {
-  year_quarter: string;
-  year?: number;
-  quarter?: number;
-  cpi?: number;
-  policy_rate?: number;
-  ccsi?: number;
-  cpi_yoy?: number;
-  shock_score?: number | null;
-  macro_shock?: number | null;
-};
+import { getMacroData, type MacroRow } from "../apiMacroCache";
 
 export default function MacroDashboard() {
   const [macroData, setMacroData] = useState<MacroRow[]>([]);
@@ -30,13 +19,15 @@ export default function MacroDashboard() {
 
   useEffect(() => {
     setStatus("loading");
-    fetch("/api/dashboard/macro")
-      .then((r) => r.json())
-      .then((arr: MacroRow[]) => {
-        setMacroData(Array.isArray(arr) ? arr : []);
+    getMacroData()
+      .then((arr) => {
+        setMacroData(arr);
         setStatus("ok");
       })
-      .catch(() => setStatus("error"));
+      .catch((e) => {
+        console.error("[MacroDashboard] macro:", e);
+        setStatus("error");
+      });
   }, []);
 
   const latest = macroData.length > 0 ? macroData[macroData.length - 1] : null;
