@@ -9,6 +9,7 @@
 (6) MAE/RMSE 출력
 (7) 모델 저장: models/forecast_p10.pkl, forecast_p50.pkl, forecast_p90.pkl
 (8) 학습 직후 샘플 상권 3개에 대해 다음 분기 예상 매출/보수~낙관/전분기 대비 % 출력
+(9) forecast_metrics.json 저장 (MAE, RMSE — 모델 비교용)
 
 선행: scripts/build_panel_and_regression.py (sales_panel.csv)
 
@@ -18,6 +19,7 @@ Mac에서 LightGBM 오류 시: brew install libomp
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -142,6 +144,15 @@ def main() -> None:
 
     # (7) 모델 저장
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    forecast_metrics = {
+        "mae": float(mae),
+        "rmse": float(rmse),
+        "eval_set": "test",
+        "model": "lightgbm_quantile",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(MODELS_DIR / "forecast_metrics.json", "w", encoding="utf-8") as f:
+        json.dump(forecast_metrics, f, ensure_ascii=False, indent=2)
     import joblib
     for name, m in models.items():
         joblib.dump(m, MODELS_DIR / f"forecast_{name}.pkl")

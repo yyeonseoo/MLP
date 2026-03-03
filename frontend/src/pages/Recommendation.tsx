@@ -20,8 +20,53 @@ export default function Recommendation() {
   const [status, setStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
 
   const fetchJson = async (url: string): Promise<unknown> => {
+    // #region agent log
+    fetch("http://127.0.0.1:7606/ingest/e72ae99e-15e9-4397-a84e-d737af9aa433", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "62212c" },
+      body: JSON.stringify({
+        sessionId: "62212c",
+        runId: "pre-fix-1",
+        hypothesisId: "H1",
+        location: "Recommendation.tsx:fetchJson:start",
+        message: "fetchJson start",
+        data: {
+          url,
+          apiBase: API_BASE,
+          fullUrl: API_BASE + url,
+          origin: location.origin,
+          href: location.href,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+
     const r = await fetch(API_BASE + url);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok) {
+      // #region agent log
+      fetch("http://127.0.0.1:7606/ingest/e72ae99e-15e9-4397-a84e-d737af9aa433", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "62212c" },
+        body: JSON.stringify({
+          sessionId: "62212c",
+          runId: "pre-fix-1",
+          hypothesisId: "H2",
+          location: "Recommendation.tsx:fetchJson:httpError",
+          message: "non-OK HTTP response",
+          data: {
+            url,
+            fullUrl: API_BASE + url,
+            status: r.status,
+            statusText: r.statusText,
+            contentType: r.headers.get("content-type") ?? null,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      throw new Error(`HTTP ${r.status}`);
+    }
     const ct = r.headers.get("content-type") ?? "";
     if (!ct.includes("application/json")) {
       const t = await r.text();
@@ -38,6 +83,24 @@ export default function Recommendation() {
         setStatus("ok");
       })
       .catch((e) => {
+        // #region agent log
+        fetch("http://127.0.0.1:7606/ingest/e72ae99e-15e9-4397-a84e-d737af9aa433", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "62212c" },
+          body: JSON.stringify({
+            sessionId: "62212c",
+            runId: "pre-fix-1",
+            hypothesisId: "H3",
+            location: "Recommendation.tsx:useEffect:catch",
+            message: "fetchJson failed",
+            data: {
+              errorName: (e as any)?.name ?? null,
+              errorMessage: e instanceof Error ? e.message : String(e),
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
         console.error("[Recommendation] top_sectors:", e);
         setStatus("error");
       });

@@ -141,14 +141,35 @@ export default function MacroDashboard() {
           <div className="card">
             <h2>CPI / 기준금리 / CCSI / 실업률 추이</h2>
             <p style={{ margin: "0 0 0.75rem", fontSize: "0.85rem", color: "#71717a" }}>
-              CPI·CCSI·실업률: 왼쪽 축 / 기준금리: 오른쪽 축(%)
+              CPI·CCSI: 왼쪽 축 / 기준금리·실업률: 오른쪽 축(%)
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={macroData} margin={{ top: 8, right: 56, left: 48, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="year_quarter" tick={{ fontSize: 11 }} />
-                <YAxis yAxisId="left" domain={["auto", "auto"]} tick={{ fontSize: 11 }} label={{ value: "CPI / CCSI / 실업률", angle: -90, position: "insideLeft", style: { fontSize: 10 } }} />
-                <YAxis yAxisId="right" orientation="right" domain={[0, 5]} tick={{ fontSize: 11 }} label={{ value: "기준금리(%)", angle: 90, position: "insideRight", style: { fontSize: 10 } }} />
+                <YAxis
+                  yAxisId="left"
+                  domain={["auto", "auto"]}
+                  tick={{ fontSize: 11 }}
+                  label={{
+                    value: "CPI / CCSI",
+                    angle: -90,
+                    position: "insideLeft",
+                    style: { fontSize: 10 },
+                  }}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  domain={[0, 5]}
+                  tick={{ fontSize: 11 }}
+                  label={{
+                    value: "기준금리·실업률(%)",
+                    angle: 90,
+                    position: "insideRight",
+                    style: { fontSize: 10 },
+                  }}
+                />
                 <Tooltip
                   contentStyle={{ background: "#27272a", border: "1px solid #3f3f46" }}
                   formatter={(value: number, name: string) => [
@@ -159,7 +180,15 @@ export default function MacroDashboard() {
                 <Legend />
                 <Line yAxisId="left" type="monotone" dataKey="cpi" name="CPI" stroke="#22c55e" strokeWidth={2} dot={{ r: 2 }} />
                 <Line yAxisId="left" type="monotone" dataKey="ccsi" name="CCSI" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} />
-                <Line yAxisId="left" type="monotone" dataKey="unemployment" name="실업률(%)" stroke="#a78bfa" strokeWidth={2} dot={{ r: 2 }} />
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="unemployment"
+                  name="실업률(%)"
+                  stroke="#a78bfa"
+                  strokeWidth={2}
+                  dot={{ r: 2 }}
+                />
                 <Line yAxisId="right" type="monotone" dataKey="policy_rate" name="기준금리(%)" stroke="#3b82f6" strokeWidth={2} dot={{ r: 2 }} />
               </LineChart>
             </ResponsiveContainer>

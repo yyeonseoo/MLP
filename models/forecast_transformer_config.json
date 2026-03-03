@@ -29,5 +29,9 @@
     "quarter_4",
     "region_id_te",
     "sector_code_te"
-  ]
+  ],
+  "seq_len": 4,
+  "d_model": 64,
+  "nhead": 4,
+  "num_layers": 2
 }

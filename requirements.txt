@@ -13,6 +13,10 @@ scipy>=1.10.0
 # Gradient Boosting
 lightgbm
 catboost
+xgboost
+
+# Transformer (forecast)
+torch>=2.0.0
 
 # Web API
 fastapi
